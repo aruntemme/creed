@@ -1068,10 +1068,10 @@ export function FileScreen() {
           )
         );
       }
-    } catch (error) {
-      setQualityNotice(
-        error instanceof Error ? error.message : "Add an API key in Settings to enable quality analysis."
-      );
+    } catch {
+      // Full-analysis failures surface as a toast via the shell QualityToasts
+      // subscriber; just clear any stale inline notice here.
+      setQualityNotice(null);
     }
   }
 

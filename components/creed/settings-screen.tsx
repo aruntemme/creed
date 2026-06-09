@@ -51,23 +51,30 @@ import { toast } from "sonner";
 import { SearchableSelect } from "@/components/creed/searchable-select";
 import { useCreed } from "@/components/creed/creed-provider";
 import {
+  clearSettingsCreditsCache,
   clearSettingsRepoCache,
   clearSettingsUsageCache,
   hashSettingsMarkdown,
   loadSettingsAiSettings,
   loadSettingsAiModels,
   loadSettingsBranches,
+  loadSettingsCredits,
   loadSettingsRepos,
   loadSettingsUsage,
   loadSettingsVersionStatus,
   setCachedSettingsAiSettings,
+  type AiMode,
   type AiUsageRange,
   type AiUsageSummary,
   type BranchOption,
+  type CreditsState,
   type PublicAiSettings,
   type RepoOption,
   type VersionControlStatus,
 } from "@/components/creed/settings-preload";
+import { AddCreditsDialog } from "@/components/creed/add-credits-dialog";
+import { CreditsHistoryDialog } from "@/components/creed/credits-history-dialog";
+import { CREDIT_MARKUP } from "@/lib/ai/credit-config";
 import {
   AI_MODEL_CATALOG,
   AI_MODEL_QUALITY_META,
@@ -115,7 +122,7 @@ function formatGitHubAccessError(message: string) {
   }
 
   if (/repo access is missing/i.test(message)) {
-    return "GitHub token expired. Reconnect to refresh.";
+    return "GitHub access expired.";
   }
 
   return message;
@@ -123,7 +130,7 @@ function formatGitHubAccessError(message: string) {
 
 function formatGitHubAccessErrorForState(message: string, githubConnected: boolean) {
   if (githubConnected && /GitHub is not connected/i.test(message)) {
-    return "GitHub token expired. Reconnect to refresh.";
+    return "GitHub access expired.";
   }
 
   return formatGitHubAccessError(message);
@@ -159,6 +166,7 @@ export function SettingsScreen() {
     provider: "openrouter",
     selectedModelId: DEFAULT_AI_MODEL_ID,
     keyStatus: "missing",
+    aiMode: "credits",
   });
   const [aiKeyDraft, setAiKeyDraft] = useState("");
   const [aiSaving, setAiSaving] = useState(false);
@@ -167,6 +175,9 @@ export function SettingsScreen() {
   const [usageRange, setUsageRange] = useState<AiUsageRange>("7d");
   const [usage, setUsage] = useState<AiUsageSummary | null>(null);
   const [aiModels, setAiModels] = useState<AiModelCatalogItem[]>(AI_MODEL_CATALOG);
+  const [credits, setCredits] = useState<CreditsState | null>(null);
+  const [addCreditsOpen, setAddCreditsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const canSaveAiKey = looksLikeApiKey(aiKeyDraft) && !aiSaving;
 
   // The global control reflects the shared level of all non-hidden sections,
@@ -341,7 +352,7 @@ export function SettingsScreen() {
 
     async function loadUsage() {
       try {
-        const loadedUsage = await loadSettingsUsage(usageRange);
+        const loadedUsage = await loadSettingsUsage(usageRange, aiSettings.aiMode);
         if (!cancelled) {
           setUsage(loadedUsage);
         }
@@ -355,7 +366,28 @@ export function SettingsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [usageRange, aiSettings.keyStatus]);
+  }, [usageRange, aiSettings.aiMode, aiSettings.keyStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCredits() {
+      try {
+        const next = await loadSettingsCredits();
+        if (!cancelled) {
+          setCredits(next);
+        }
+      } catch {
+        return;
+      }
+    }
+
+    void loadCredits();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -598,7 +630,9 @@ export function SettingsScreen() {
       selectedModelId: modelId,
     }));
 
-    if (aiSettings.keyStatus !== "valid") {
+    // Persist when there's a usable key (BYOK) or when on credits, where the
+    // platform key runs the selected model. Skip only for BYOK with no key.
+    if (aiSettings.keyStatus !== "valid" && aiSettings.aiMode !== "credits") {
       return;
     }
 
@@ -627,6 +661,44 @@ export function SettingsScreen() {
       }
     } catch {
       toast.error("Couldn't save model");
+    }
+  }
+
+  async function handleModeChange(mode: AiMode) {
+    if (aiSettings.aiMode === mode) {
+      return;
+    }
+    const previous = aiSettings.aiMode;
+    setAiSettings((current) => ({ ...current, aiMode: mode }));
+    try {
+      const response = await fetch("/api/app/ai/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelId: aiSettings.selectedModelId, aiMode: mode }),
+      });
+      const payload = (await response.json()) as {
+        settings?: PublicAiSettings;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not switch mode.");
+      }
+      if (payload.settings) {
+        setAiSettings(payload.settings);
+        setCachedSettingsAiSettings(payload.settings);
+      }
+    } catch {
+      setAiSettings((current) => ({ ...current, aiMode: previous }));
+      toast.error("Couldn't switch mode");
+    }
+  }
+
+  async function refreshCredits() {
+    clearSettingsCreditsCache();
+    try {
+      setCredits(await loadSettingsCredits());
+    } catch {
+      // Keep the current balance on a transient failure.
     }
   }
 
@@ -761,7 +833,7 @@ export function SettingsScreen() {
             <div className="mt-4 divide-y divide-[var(--creed-border)] overflow-hidden rounded-[var(--radius-xl)] border border-[var(--creed-border)] bg-[var(--creed-surface)]">
               <IntegrationRow
                 title="Google"
-                icon={<GoogleMark className="h-5 w-5" />}
+                icon={<GoogleMark className="h-7 w-7" />}
                 status="connected"
                 statusLabel="Connected"
                 secondaryLabel={state.user.email}
@@ -769,7 +841,7 @@ export function SettingsScreen() {
               />
               <IntegrationRow
                 title="GitHub"
-                icon={<GitHubMark className="h-5 w-5 text-[#24292F] dark:text-[var(--creed-text-primary)]" />}
+                icon={<GitHubMark className="h-7 w-7 text-[#24292F] dark:text-[var(--creed-text-primary)]" />}
                 status={githubStatus}
                 statusLabel={
                   githubConnected
@@ -825,30 +897,75 @@ export function SettingsScreen() {
           <Separator className="my-10 bg-[var(--creed-border)]" />
 
           <section>
-            <h2 className="text-[16px] font-medium text-[var(--creed-text-primary)]">
-              API keys and models
-            </h2>
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-[16px] font-medium text-[var(--creed-text-primary)]">
+                Credits and models
+              </h2>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-8 items-center gap-2 rounded-md border border-[var(--creed-border)] bg-[var(--creed-surface)] px-3 text-[12px] text-[var(--creed-text-primary)] transition-colors duration-150 hover:bg-[var(--creed-surface-raised)]"
+                  >
+                    {aiSettings.aiMode === "credits" ? "Credits" : "BYOK"}
+                    <ChevronDown className="h-3.5 w-3.5 text-[var(--creed-text-secondary)]" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="end"
+                  className="min-w-32 space-y-1 border-[var(--creed-border)] bg-[var(--creed-surface)] p-1.5"
+                >
+                  {(["credits", "byok"] as AiMode[]).map((mode) => (
+                    <DropdownMenuItem
+                      key={mode}
+                      onSelect={() => void handleModeChange(mode)}
+                      className={cn(
+                        "flex items-center justify-between gap-5 rounded-lg px-3 py-2 text-[13px]",
+                        aiSettings.aiMode === mode && "bg-[var(--creed-surface-selected)] font-medium"
+                      )}
+                    >
+                      <span>{mode === "credits" ? "Credits" : "BYOK"}</span>
+                      {aiSettings.aiMode === mode ? (
+                        <Check className="h-3.5 w-3.5 shrink-0 text-[var(--creed-text-primary)]" />
+                      ) : null}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             <div className="mt-4 rounded-[var(--radius-xl)] border border-[var(--creed-border)] bg-[var(--creed-surface)] p-5">
               <div className="grid gap-5 md:grid-cols-[1.1fr_0.9fr] md:items-stretch">
                 <div className="flex flex-col gap-4">
-                  <div>
-                    <label className="mb-2 block text-[12px] font-medium text-[var(--creed-text-secondary)]">
-                      OpenRouter API key
-                    </label>
-                    <Input
-                      type="password"
-                      value={aiKeyDraft}
-                      onChange={(event) => {
-                        setAiKeyDraft(event.target.value);
-                      }}
-                      placeholder={
-                        aiSettings.keyLastFour
-                          ? `Saved key ending in ${aiSettings.keyLastFour}`
-                          : "sk-or-..."
-                      }
-                      className="h-11 rounded-xl border-[var(--creed-border)] bg-[var(--creed-surface)] px-4 text-[14px]"
-                    />
-                  </div>
+                  {aiSettings.aiMode === "credits" ? (
+                    <div className="rounded-[var(--radius-lg)] border border-[var(--creed-border)] px-4 py-3">
+                      <div className="text-[12px] font-medium text-[var(--creed-text-secondary)]">
+                        Credit balance
+                      </div>
+                      <div className="mt-0.5 text-[24px] font-medium tracking-[-0.03em] text-[var(--creed-text-primary)]">
+                        ${(credits?.balanceUsd ?? 0).toFixed(2)}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="mb-2 block text-[12px] font-medium text-[var(--creed-text-secondary)]">
+                        OpenRouter API key
+                      </label>
+                      <Input
+                        type="password"
+                        value={aiKeyDraft}
+                        onChange={(event) => {
+                          setAiKeyDraft(event.target.value);
+                        }}
+                        placeholder={
+                          aiSettings.keyLastFour
+                            ? `Saved key ending in ${aiSettings.keyLastFour}`
+                            : "sk-or-..."
+                        }
+                        className="h-11 rounded-xl border-[var(--creed-border)] bg-[var(--creed-surface)] px-4 text-[14px]"
+                      />
+                    </div>
+                  )}
+
                   <div>
                     <label className="mb-2 block text-[12px] font-medium text-[var(--creed-text-secondary)]">
                       Model
@@ -857,37 +974,69 @@ export function SettingsScreen() {
                       value={aiSettings.selectedModelId}
                       onChange={(modelId) => void handleModelChange(modelId)}
                       models={aiModels}
+                      aiMode={aiSettings.aiMode}
                     />
                   </div>
-                  <div className="mt-auto flex items-center justify-between gap-2 pt-1">
-                    <Button
-                      variant="ghost"
-                      className="rounded-md px-3 text-[var(--creed-text-secondary)] hover:bg-[var(--creed-surface-raised)] hover:text-[var(--creed-text-primary)]"
-                      onClick={() => {
-                        if (aiSettings.keyLastFour) {
-                          void handleClearAiKey();
-                        } else {
-                          setAiKeyDraft("");
-                        }
-                      }}
-                      disabled={aiSaving || (!aiKeyDraft && !aiSettings.keyLastFour)}
-                    >
-                      Clear
-                    </Button>
-                    <Button
-                      className="rounded-md bg-[var(--creed-text-primary)] px-4 text-[var(--creed-button-primary-fg)] hover:bg-[var(--creed-button-primary-hover)]"
-                      onClick={() => void handleSaveAiSettings()}
-                      disabled={!canSaveAiKey}
-                    >
-                      {aiSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-                      Save API key
-                    </Button>
-                  </div>
+
+                  {aiSettings.aiMode === "credits" ? (
+                    <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+                      <Button
+                        variant="ghost"
+                        className="rounded-md px-3 text-[var(--creed-text-secondary)] hover:bg-[var(--creed-surface-raised)] hover:text-[var(--creed-text-primary)]"
+                        onClick={() => setHistoryOpen(true)}
+                      >
+                        View history
+                      </Button>
+                      <Button
+                        className="rounded-md bg-[var(--creed-text-primary)] px-4 text-[var(--creed-button-primary-fg)] hover:bg-[var(--creed-button-primary-hover)]"
+                        onClick={() => setAddCreditsOpen(true)}
+                      >
+                        Add credits
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+                      <Button
+                        variant="ghost"
+                        className="rounded-md px-3 text-[var(--creed-text-secondary)] hover:bg-[var(--creed-surface-raised)] hover:text-[var(--creed-text-primary)]"
+                        onClick={() => {
+                          if (aiSettings.keyLastFour) {
+                            void handleClearAiKey();
+                          } else {
+                            setAiKeyDraft("");
+                          }
+                        }}
+                        disabled={aiSaving || (!aiKeyDraft && !aiSettings.keyLastFour)}
+                      >
+                        Clear
+                      </Button>
+                      <Button
+                        className="rounded-md bg-[var(--creed-text-primary)] px-4 text-[var(--creed-button-primary-fg)] hover:bg-[var(--creed-button-primary-hover)]"
+                        onClick={() => void handleSaveAiSettings()}
+                        disabled={!canSaveAiKey}
+                      >
+                        {aiSaving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+                        Save API key
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
                 <UsageCard usage={usage} range={usageRange} onRangeChange={setUsageRange} />
               </div>
             </div>
+
+            <AddCreditsDialog
+              open={addCreditsOpen}
+              onOpenChange={setAddCreditsOpen}
+              currentBalanceUsd={credits?.balanceUsd ?? 0}
+              onToppedUp={() => void refreshCredits()}
+            />
+            <CreditsHistoryDialog
+              open={historyOpen}
+              onOpenChange={setHistoryOpen}
+              transactions={credits?.transactions ?? []}
+            />
           </section>
 
           <Separator className="my-10 bg-[var(--creed-border)]" />
@@ -1194,11 +1343,16 @@ function ModelSelect({
   value,
   onChange,
   models,
+  aiMode,
 }: {
   value: string;
   onChange: (value: string) => void;
   models: AiModelCatalogItem[];
+  aiMode: AiMode;
 }) {
+  // Credits run on the platform key at a markup, so the dropdown shows the
+  // effective (marked-up) price. BYOK is at-cost, so it shows the raw list price.
+  const multiplier = aiMode === "credits" ? CREDIT_MARKUP : 1;
   return (
     <SearchableSelect
       value={value}
@@ -1209,7 +1363,7 @@ function ModelSelect({
         key: model.id,
         value: model.id,
         label: model.name,
-        description: `${model.provider} · ${AI_MODEL_QUALITY_META[model.quality].label} · ${formatModelCost(model)}`,
+        description: `${model.provider} · ${AI_MODEL_QUALITY_META[model.quality].label} · ${formatModelCost(model, multiplier)}`,
         search: `${model.name} ${model.provider} ${model.id} ${AI_MODEL_QUALITY_META[model.quality].label}`,
       }))}
       renderOption={(option) => {
@@ -1228,7 +1382,7 @@ function ModelSelect({
                 <span>·</span>
                 <span>{quality.label}</span>
                 <span>·</span>
-                <span>{formatModelCost(model)}</span>
+                <span>{formatModelCost(model, multiplier)}</span>
               </div>
             </div>
           </div>

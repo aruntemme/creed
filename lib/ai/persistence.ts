@@ -1,6 +1,7 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { decryptSecret, encryptSecret } from "@/lib/secret-crypto";
+import { encryptSecret } from "@/lib/secret-crypto";
+import { CREDIT_MARKUP } from "@/lib/ai/credit-config";
 import {
   AI_MODEL_CATALOG,
   DEFAULT_AI_MODEL_ID,
@@ -11,6 +12,11 @@ import {
 
 import type { SupabaseLikeClient } from "@/lib/supabase/types";
 
+// Which key pays for first-party AI. 'credits' runs on Creed's platform key
+// and bills the user's prepaid balance; 'byok' runs on the user's own key at
+// no markup. The toggle lives in Settings; default is 'credits'.
+export type AiMode = "credits" | "byok";
+
 type AiSettingsRow = {
   user_id: string;
   provider: "openrouter";
@@ -18,6 +24,7 @@ type AiSettingsRow = {
   encrypted_api_key: string | null;
   api_key_last_four: string | null;
   key_status: "missing" | "valid" | "invalid";
+  ai_mode: AiMode;
   last_validated_at: string | null;
   created_at: string;
   updated_at: string;
@@ -27,6 +34,7 @@ export type PublicAiSettings = {
   provider: "openrouter";
   selectedModelId: string;
   keyStatus: "missing" | "valid" | "invalid";
+  aiMode: AiMode;
   keyLastFour?: string;
   lastValidatedAt?: string;
 };
@@ -70,6 +78,7 @@ export function buildPublicAiSettings(row?: AiSettingsRow | null): PublicAiSetti
     provider: "openrouter",
     selectedModelId: row?.selected_model_id ?? DEFAULT_AI_MODEL_ID,
     keyStatus: row?.key_status ?? "missing",
+    aiMode: row?.ai_mode ?? "credits",
     keyLastFour: row?.api_key_last_four ?? undefined,
     lastValidatedAt: row?.last_validated_at ?? undefined,
   };
@@ -97,23 +106,26 @@ export async function upsertAiSettings({
   modelId,
   apiKey,
   clearApiKey,
+  aiMode,
 }: {
   client: unknown;
   userId: string;
   modelId: string;
   apiKey?: string;
   clearApiKey?: boolean;
+  aiMode?: AiMode;
 }) {
   const db = client as SupabaseLikeClient;
   const existing = await readAiSettings(db, userId);
   const model = await getAiModel(modelId);
   const now = new Date().toISOString();
   const trimmedKey = apiKey?.trim();
+  const nextMode: AiMode = aiMode ?? existing?.ai_mode ?? "credits";
 
-  if (!clearApiKey && !trimmedKey && !existing?.encrypted_api_key) {
-    throw new Error("Paste an OpenRouter API key to continue.");
-  }
-
+  // No key-required guard here. This endpoint also handles credits-mode model
+  // changes and the credits/byok toggle, none of which involve a key. The
+  // "you need a key" check happens at AI-call time (resolveAiCredential), and
+  // the Save button is disabled client-side when the field is empty.
   if (trimmedKey) {
     await validateOpenRouterKey(trimmedKey);
   }
@@ -132,7 +144,14 @@ export async function upsertAiSettings({
       : trimmedKey
         ? trimmedKey.slice(-4)
         : existing?.api_key_last_four ?? null,
-    key_status: clearApiKey ? ("missing" as const) : ("valid" as const),
+    // Preserve key_status on a model/mode-only save; only a new key flips it
+    // to valid and a clear flips it to missing.
+    key_status: clearApiKey
+      ? ("missing" as const)
+      : trimmedKey
+        ? ("valid" as const)
+        : existing?.key_status ?? ("missing" as const),
+    ai_mode: nextMode,
     last_validated_at: now,
     updated_at: now,
     created_at: existing?.created_at ?? now,
@@ -160,18 +179,6 @@ async function validateOpenRouterKey(apiKey: string) {
   }
 }
 
-export async function getUserOpenRouterCredential(client: unknown, userId: string) {
-  const row = await readAiSettings(client, userId);
-  if (!row?.encrypted_api_key || row.key_status !== "valid") {
-    throw new Error("Add an OpenRouter API key before using Creed AI.");
-  }
-
-  return {
-    apiKey: decryptSecret(row.encrypted_api_key),
-    modelId: row.selected_model_id || DEFAULT_AI_MODEL_ID,
-  };
-}
-
 export async function recordAiUsage({
   client,
   userId,
@@ -181,6 +188,7 @@ export async function recordAiUsage({
   inputTokens,
   outputTokens,
   estimatedCostUsd,
+  aiMode,
 }: {
   client: unknown;
   userId: string;
@@ -190,6 +198,7 @@ export async function recordAiUsage({
   inputTokens: number;
   outputTokens: number;
   estimatedCostUsd: number;
+  aiMode: AiMode;
 }) {
   const db = client as SupabaseLikeClient;
   const { error } = await db.from("creed_ai_usage").insert({
@@ -199,6 +208,7 @@ export async function recordAiUsage({
     provider: "openrouter",
     model_id: modelId,
     model_quality: modelQuality,
+    ai_mode: aiMode,
     input_tokens: Math.max(0, Math.round(inputTokens)),
     output_tokens: Math.max(0, Math.round(outputTokens)),
     estimated_cost_usd: Number(estimatedCostUsd.toFixed(6)),
@@ -214,12 +224,21 @@ export function getRangeStart(range: AiUsageRange) {
   return new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-export async function readAiUsageSummary(client: unknown, userId: string, range: AiUsageRange) {
+export async function readAiUsageSummary(
+  client: unknown,
+  userId: string,
+  range: AiUsageRange,
+  mode: AiMode
+) {
   const db = client as SupabaseLikeClient;
+  // Credits are billed at the markup, so the credits view shows what actually
+  // left the balance; BYOK is at-cost.
+  const markup = mode === "credits" ? CREDIT_MARKUP : 1;
   const { data, error } = await db
     .from("creed_ai_usage")
     .select("*")
     .eq("user_id", userId)
+    .eq("ai_mode", mode)
     .gte("created_at", getRangeStart(range))
     .order("created_at", { ascending: true });
 
@@ -251,7 +270,7 @@ export async function readAiUsageSummary(client: unknown, userId: string, range:
   const models = await getOpenRouterModelCatalog();
 
   for (const row of rows) {
-    const cost = Number(row.estimated_cost_usd) || 0;
+    const cost = (Number(row.estimated_cost_usd) || 0) * markup;
     const quality = row.model_quality;
     const date = row.created_at.slice(0, 10);
     const model = models.find((item) => item.id === row.model_id);

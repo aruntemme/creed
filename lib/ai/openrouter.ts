@@ -88,48 +88,46 @@ export async function callOpenRouter({
     clearTimeout(timeout);
     // Network failure or our own timeout abort.
     if (cause instanceof Error && cause.name === "AbortError") {
-      throw new Error(
-        "OpenRouter took longer than expected to respond. Try again, or pick a smaller model in Settings."
-      );
+      throw new Error("OpenRouter timed out.");
     }
-    throw new Error(
-      "Could not reach OpenRouter. Check your network connection and try again."
-    );
+    throw new Error("Couldn't reach OpenRouter.");
   }
 
   try {
-    const payload = (await response.json().catch(() => null)) as
-      | (OpenRouterResponse & { error?: { message?: string } })
-      | null;
+    let payload: (OpenRouterResponse & { error?: { message?: string } }) | null;
+    try {
+      payload = (await response.json()) as OpenRouterResponse & { error?: { message?: string } };
+    } catch {
+      // A read failure here is almost always our own timeout aborting the
+      // still-streaming body. Surface it as a timeout, not "empty response".
+      if (controller.signal.aborted) {
+        throw new Error("OpenRouter timed out.");
+      }
+      payload = null;
+    }
 
     if (!response.ok) {
       // Translate the common HTTP statuses into something the user can act on.
       const upstream = payload?.error?.message?.trim();
       if (response.status === 401) {
-        throw new Error(
-          "OpenRouter rejected your API key. Open Settings, paste a fresh key, and try again."
-        );
+        throw new Error("OpenRouter rejected your key.");
       }
       if (response.status === 402) {
-        throw new Error(
-          "Your OpenRouter account is out of credit. Top it up at openrouter.ai and try again."
-        );
+        throw new Error("OpenRouter is out of credit.");
       }
       if (response.status === 429) {
-        throw new Error(
-          "OpenRouter is rate-limiting your key right now. Wait a minute and try again, or pick a different model."
-        );
+        throw new Error("OpenRouter is rate-limiting you.");
       }
       throw new Error(upstream || "OpenRouter rejected this request.");
     }
 
     if (!payload) {
-      throw new Error("OpenRouter returned an empty response. Try again, or pick a different model in Settings.");
+      throw new Error("OpenRouter returned an empty response.");
     }
 
     const content = extractContent(payload);
     if (!content) {
-      throw new Error("OpenRouter returned no content. Try a different model in Settings.");
+      throw new Error("OpenRouter returned no content.");
     }
 
   const inputTokens = payload.usage?.prompt_tokens ?? 0;

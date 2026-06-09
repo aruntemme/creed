@@ -2,6 +2,8 @@ import "server-only";
 import Stripe from "stripe";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { SupabaseLikeClient } from "@/lib/supabase/types";
+import { creditTopup } from "@/lib/ai/credits";
+import { log } from "@/lib/observability";
 
 // Stripe client + entitlement helpers.
 //
@@ -36,6 +38,14 @@ export function getStripePriceId(): string {
   const value = process.env.STRIPE_PRICE_ID?.trim();
   if (!value) {
     throw new Error("STRIPE_PRICE_ID is not configured.");
+  }
+  return value;
+}
+
+export function getStripePublishableKey(): string {
+  const value = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.trim();
+  if (!value) {
+    throw new Error("NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not configured.");
   }
   return value;
 }
@@ -226,4 +236,46 @@ export async function upsertEntitlementFromSession(
     throw new Error("Stripe entitlement upsert returned no row.");
   }
   return rowToEntitlement(data);
+}
+
+/**
+ * Credit a user's prepaid balance from a succeeded PaymentIntent. Mirrors
+ * upsertEntitlementFromSession: validate + extract, then write via the
+ * service-role RPC (idempotent on the PaymentIntent id).
+ *
+ * Returns false (no-op) when the PI is not a credits top-up or is missing the
+ * fields we need. The $49 Checkout emits its own `payment_intent.succeeded`,
+ * which lands here too and must be skipped - the `type === 'credits'` guard
+ * does that (the Checkout PI carries no such metadata).
+ */
+export async function creditBalanceFromPaymentIntent(
+  paymentIntent: Stripe.PaymentIntent
+): Promise<boolean> {
+  const metadata = paymentIntent.metadata ?? {};
+  if (metadata.type !== "credits") {
+    return false;
+  }
+  const userId = metadata.supabaseUserId;
+  if (!userId || typeof userId !== "string") {
+    return false;
+  }
+  // cents -> micro is `x 10_000`, which is USD-only. Guard the currency so a
+  // non-USD PI can never be credited 100x off.
+  if (paymentIntent.currency !== "usd") {
+    log.warn("credit_topup_skipped_non_usd", {
+      paymentIntentId: paymentIntent.id,
+      currency: paymentIntent.currency,
+    });
+    return false;
+  }
+  const amountReceived = paymentIntent.amount_received ?? 0;
+  if (amountReceived <= 0) {
+    return false;
+  }
+  await creditTopup({
+    userId,
+    amountMicro: amountReceived * 10_000,
+    paymentIntentId: paymentIntent.id,
+  });
+  return true;
 }

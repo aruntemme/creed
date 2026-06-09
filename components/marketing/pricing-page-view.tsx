@@ -28,7 +28,7 @@ const SHARED_FEATURES: Feature[] = [
   { label: "Full Creed editor with rich components", included: true },
   { label: "All MCP connections and integrations", included: true },
   { label: "Quality scoring and inline diff review", included: true },
-  { label: "Bring your own OpenRouter key (BYOK)", included: true },
+  { label: "Use credits or bring your own key (BYOK)", included: true },
 ];
 
 const FREE_EXTRAS: Feature[] = [

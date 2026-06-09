@@ -2,8 +2,10 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { CreedSection } from "@/lib/creed-data";
 import { callOpenRouter, parseJsonObject } from "@/lib/ai/openrouter";
-import { getUserOpenRouterCredential, recordAiUsage } from "@/lib/ai/persistence";
+import { recordAiUsage } from "@/lib/ai/persistence";
+import { deductCredits, resolveAiCredential } from "@/lib/ai/credits";
 import { buildQualityPrompt, CREED_QUALITY_RUBRIC_VERSION } from "@/lib/ai/quality-rubric";
+import { log } from "@/lib/observability";
 
 import type { SupabaseLikeClient } from "@/lib/supabase/types";
 
@@ -377,15 +379,21 @@ export async function analyzeCreedQuality({
       contentHash,
       sectionHashes: readStoredSectionHashes(cached) ?? cached.report.sectionHashes ?? sectionHashes,
       cached: true,
+      creditBalanceUsd: null,
     };
   }
 
-  const credential = await getUserOpenRouterCredential(client, userId);
+  const credential = await resolveAiCredential(client, userId);
   const result = await callOpenRouter({
     apiKey: credential.apiKey,
     modelId: credential.modelId,
-    maxTokens: 4500,
+    // Headroom for a full multi-section report. Too low and the JSON gets cut
+    // off mid-string, which then fails to parse.
+    maxTokens: 12000,
     temperature: 0.15,
+    // GPT-class reasoning over a full Creed can take 60-150s; the default 90s
+    // abort surfaces mid-stream as "empty response". The route allows 300s.
+    timeoutMs: 240000,
     messages: [
       {
         role: "system",
@@ -399,41 +407,82 @@ export async function analyzeCreedQuality({
     ],
   });
 
-  const report = validateQualityReport(parseJsonObject(result.content), sections, contentHash);
+  // Parse the model output first. A truncated or malformed response throws
+  // here, before any charge, so the user is never billed for an analysis that
+  // produced no usable report. Surface a clean message, not the raw JSON error.
+  let parsed: unknown;
+  try {
+    parsed = parseJsonObject(result.content);
+  } catch {
+    throw new Error("Analysis failed. Try again.");
+  }
+  const report = validateQualityReport(parsed, sections, contentHash);
   const reportWithHashes = {
     ...report,
     sectionHashes,
   };
+
+  // Now that we have a valid report, bill prepaid credits - before the report /
+  // usage writes so a later DB hiccup can't skip the charge. No-op for BYOK.
+  let creditBalanceUsd: number | null = null;
+  if (credential.mode === "credits") {
+    creditBalanceUsd = await deductCredits({
+      userId,
+      costUsd: result.estimatedCostUsd,
+      feature: "quality_analysis",
+      modelId: credential.modelId,
+    });
+  }
   if (persist) {
-    const now = new Date().toISOString();
-    const db = client as SupabaseLikeClient;
-    const { error } = await db.from("creed_quality_reports").upsert(
-      {
-        user_id: userId,
-        content_hash: contentHash,
-        section_hashes: sectionHashes,
-        model_id: credential.modelId,
-        report: reportWithHashes,
-        created_at: now,
-        updated_at: now,
-      },
-      { onConflict: "user_id" }
-    );
-    assertNoError(error, "Could not save quality report.");
+    // Caching the report is best-effort: the client still gets it in the
+    // response, so a write hiccup must never fail (or raw-toast) the analysis.
+    try {
+      const now = new Date().toISOString();
+      const db = client as SupabaseLikeClient;
+      const { error } = await db.from("creed_quality_reports").upsert(
+        {
+          user_id: userId,
+          content_hash: contentHash,
+          section_hashes: sectionHashes,
+          model_id: credential.modelId,
+          report: reportWithHashes,
+          created_at: now,
+          updated_at: now,
+        },
+        { onConflict: "user_id" }
+      );
+      assertNoError(error, "Could not save quality report.");
+    } catch (cause) {
+      log.warn("quality_report_persist_failed", {
+        userId,
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
   }
 
-  await recordAiUsage({
-    client,
-    userId,
-    feature: "quality_analysis",
-    modelId: credential.modelId,
-    modelQuality: result.modelQuality,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    estimatedCostUsd: result.estimatedCostUsd,
-  });
+  // Record usage only when the charge actually landed: BYOK never charges, and
+  // in credits mode a non-null balance means the debit succeeded. This keeps the
+  // spend chart consistent with the balance (no phantom cost if the debit failed).
+  if (credential.mode === "byok" || creditBalanceUsd !== null) {
+    try {
+      await recordAiUsage({
+        client,
+        userId,
+        feature: "quality_analysis",
+        modelId: credential.modelId,
+        modelQuality: result.modelQuality,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        estimatedCostUsd: result.estimatedCostUsd,
+        aiMode: credential.mode,
+      });
+    } catch {
+      // Usage logging is best-effort; a completed, charged analysis must not
+      // fail just because the spend-chart insert hiccupped.
+    }
+  }
 
-  return { report: reportWithHashes, contentHash, sectionHashes, cached: false };
+  return { report: reportWithHashes, contentHash, sectionHashes, cached: false, creditBalanceUsd };
 }
 
 export async function updateSectionQualityBaseline({

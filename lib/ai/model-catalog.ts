@@ -423,8 +423,11 @@ export function getSeedAiModel(modelId: string | null | undefined) {
   return seedModels.find((model) => model.id === modelId) ?? seedModels[0];
 }
 
-export function formatModelCost(model: Pick<AiModelCatalogItem, "inputCostPerMillion" | "outputCostPerMillion">) {
-  return `$${formatCost(model.inputCostPerMillion)} / $${formatCost(model.outputCostPerMillion)} pm`;
+export function formatModelCost(
+  model: Pick<AiModelCatalogItem, "inputCostPerMillion" | "outputCostPerMillion">,
+  multiplier = 1
+) {
+  return `$${formatCost(model.inputCostPerMillion * multiplier)} / $${formatCost(model.outputCostPerMillion * multiplier)} pm`;
 }
 
 function formatCost(value: number) {

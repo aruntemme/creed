@@ -22,14 +22,25 @@
 
 import type { CreedQualityReport } from "@/components/creed/file-quality-ui";
 import type { CreedSection } from "@/lib/creed-data";
+import { LOW_BALANCE_USD } from "@/lib/ai/credit-config";
 
 type Listener = () => void;
+
+// One completion of a user-initiated full analysis. `id` bumps each time so a
+// shell-level subscriber can fire exactly one toast per completion.
+export type QualityOutcome = {
+  id: number;
+  ok: boolean;
+  message: string | null;
+  lowCredits: boolean;
+};
 
 type RunnerSnapshot = {
   report: CreedQualityReport | null;
   fullRunning: boolean;
   sectionRunning: ReadonlySet<string>;
   error: string | null;
+  lastOutcome: QualityOutcome | null;
 };
 
 type FullRunResult = {
@@ -38,6 +49,7 @@ type FullRunResult = {
   storedContentHash?: string | null;
   storedSectionHashes?: Record<string, string>;
   current?: boolean;
+  creditBalanceUsd?: number | null;
 };
 
 const listeners = new Set<Listener>();
@@ -47,6 +59,13 @@ const listeners = new Set<Listener>();
 let report: CreedQualityReport | null = null;
 let error: string | null = null;
 const sectionRunning = new Set<string>();
+
+let lastOutcome: QualityOutcome | null = null;
+let outcomeCounter = 0;
+
+function recordOutcome(next: Omit<QualityOutcome, "id">) {
+  lastOutcome = { id: ++outcomeCounter, ...next };
+}
 
 const inFlightFull = new Map<string, Promise<FullRunResult>>();
 const inFlightSection = new Map<string, Promise<CreedQualityReport["sections"][number] | null>>();
@@ -59,6 +78,7 @@ function freezeSnapshot(): RunnerSnapshot {
     fullRunning: inFlightFull.size > 0,
     sectionRunning: new Set(sectionRunning),
     error,
+    lastOutcome,
   });
 }
 
@@ -85,6 +105,7 @@ const SERVER_SNAPSHOT: RunnerSnapshot = Object.freeze({
   fullRunning: false,
   sectionRunning: new Set<string>(),
   error: null,
+  lastOutcome: null,
 });
 
 export function getQualityRunnerServerSnapshot(): RunnerSnapshot {
@@ -145,9 +166,22 @@ export function runFullQuality(args: FullRunArgs): Promise<FullRunResult> {
         report = payload.report;
         error = null;
       }
+      // Only user-initiated analyses (not the silent baseline read) toast.
+      if (!args.readOnly) {
+        const balance = payload.creditBalanceUsd;
+        recordOutcome({
+          ok: true,
+          message: null,
+          lowCredits: typeof balance === "number" && balance < LOW_BALANCE_USD,
+        });
+      }
       return payload;
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Could not analyze Creed quality.";
+      const message = cause instanceof Error ? cause.message : "Could not analyze Creed quality.";
+      error = message;
+      if (!args.readOnly) {
+        recordOutcome({ ok: false, message, lowCredits: false });
+      }
       throw cause;
     } finally {
       inFlightFull.delete(args.fingerprint);

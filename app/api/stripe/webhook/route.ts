@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import {
   assertWebhookSignature,
+  creditBalanceFromPaymentIntent,
   getStripeWebhookSecret,
   upsertEntitlementFromSession,
 } from "@/lib/stripe";
@@ -71,6 +72,26 @@ export async function POST(request: Request) {
       log.info("stripe_webhook_entitlement_granted", {
         eventId: event.id,
         userId: entitlement.userId,
+      });
+      return NextResponse.json({ ok: true, applied: true });
+    }
+
+    if (event.type === "payment_intent.succeeded") {
+      // Prepaid credits top-up. The $49 Checkout's own payment_intent.succeeded
+      // also lands here; creditBalanceFromPaymentIntent returns false for it
+      // (no `type: 'credits'` metadata) so it is acked without crediting.
+      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      const credited = await creditBalanceFromPaymentIntent(paymentIntent);
+      if (!credited) {
+        log.info("stripe_webhook_payment_intent_skipped", {
+          eventId: event.id,
+          paymentIntentId: paymentIntent.id,
+        });
+        return NextResponse.json({ ok: true, applied: false });
+      }
+      log.info("stripe_webhook_credits_topped_up", {
+        eventId: event.id,
+        paymentIntentId: paymentIntent.id,
       });
       return NextResponse.json({ ok: true, applied: true });
     }
