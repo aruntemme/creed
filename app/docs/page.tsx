@@ -3,7 +3,7 @@ import { DocsPageView } from "@/components/marketing/docs-page-view";
 
 export const metadata: Metadata = {
   title: "Docs",
-  description: "How to set up Creed, connect agents, and keep your context useful over time.",
+  description: "What Creed is, what belongs in your profile, how to connect agents over MCP, how they read and improve it, and the full tool and HTTP API reference.",
   alternates: { canonical: "/docs" },
 };
 

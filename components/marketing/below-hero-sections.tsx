@@ -105,7 +105,6 @@ const titleViewport = { once: true, amount: 0.86 } as const;
 export function BelowHeroSections({ configured }: { configured: boolean }) {
   return (
     <main className="bg-[var(--creed-background)] pb-12">
-      <ContextDefinitionSection />
       <CreedBentoSection />
       <GovernedCollaborationSection />
       <HowItWorksSection />
@@ -114,48 +113,6 @@ export function BelowHeroSections({ configured }: { configured: boolean }) {
       <ClosingCtaSection configured={configured} />
       <MarketingFooter />
     </main>
-  );
-}
-
-// A plain-prose definition of the category near the top of the page. The
-// homepage is otherwise visual, so this is the crawlable, quotable text that
-// gives search and AI engines a clear answer to "what is a personal context
-// file" - and the internal link seeds the /context explainer.
-function ContextDefinitionSection() {
-  return (
-    <section className="px-6 pt-20 pb-4 md:px-10 md:pt-24 lg:px-12">
-      <div className="mx-auto max-w-3xl">
-        <SectionHeading
-          headline="What a personal context file is"
-          subline="One profile every AI reads before it answers you."
-        />
-
-        <div className="mx-auto mt-10 max-w-2xl space-y-5 text-center">
-          <p className="t-lede text-[var(--creed-text-secondary)]">
-            A personal context file is a single, structured profile that holds who you are,
-            how you work, and how you want AI to respond. You write it once, and every agent
-            you connect reads it before answering, so you stop re-explaining yourself in each
-            new chat.
-          </p>
-          <p className="t-body text-[var(--creed-text-tertiary)]">
-            Creed keeps that file in ten focused sections, from identity and goals to
-            preferences and routines. Your agents propose updates as they learn something
-            durable about you, and you decide what stays. The result is one source of truth
-            that travels with you across tools, not memory locked inside a single app.
-          </p>
-        </div>
-
-        <div className="mt-7 flex justify-center">
-          <Link
-            href="/context"
-            className="t-body inline-flex items-center gap-1.5 font-medium text-[#2563EB] transition-colors hover:text-[#1D4ED8]"
-          >
-            Learn what goes in a personal context file
-            <ArrowRightIcon size={15} className="inline-flex shrink-0 items-center justify-center" />
-          </Link>
-        </div>
-      </div>
-    </section>
   );
 }
 
