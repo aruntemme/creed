@@ -35,6 +35,7 @@ const JSON_COLUMNS = new Set<string>([
   "creed_sections.payload",
   "creed_proposals.draft",
   "creed_quality_reports.report",
+  "creed_quality_reports.section_hashes",
   "creed_audit_log.metadata",
   "oauth_clients.redirect_uris",
 ]);

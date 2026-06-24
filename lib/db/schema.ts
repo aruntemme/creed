@@ -372,6 +372,9 @@ export const creedQualityReports = sqliteTable(
       .primaryKey()
       .references(() => users.id, { onDelete: "cascade" }),
     contentHash: text("content_hash").notNull(),
+    sectionHashes: text("section_hashes", { mode: "json" }).$type<
+      Record<string, string>
+    >(),
     modelId: text("model_id").notNull(),
     report: text("report", { mode: "json" })
       .notNull()

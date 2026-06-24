@@ -9,6 +9,7 @@ import "server-only";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { SupabaseLikeClient } from "@/lib/supabase/types";
 import { CREDIT_MARKUP } from "@/lib/ai/credit-config";
+import { isOpenAdapter } from "@/lib/ai/config";
 import { DEFAULT_AI_MODEL_ID, getAiModel } from "@/lib/ai/model-catalog";
 import { readAiSettings, type AiMode } from "@/lib/ai/persistence";
 import { decryptSecret } from "@/lib/secret-crypto";
@@ -105,6 +106,13 @@ export async function resolveAiCredential(
   const apiKey = getOpenRouterPlatformKey();
   const modelId = row?.selected_model_id || DEFAULT_AI_MODEL_ID;
 
+  // Self-hosted gateway (OpenAdapter): the operator runs AI on their own key,
+  // so there's no prepaid-credit accounting. Skip the $0-cost refusal and the
+  // balance gate and run directly on the platform key.
+  if (isOpenAdapter()) {
+    return { apiKey, modelId, mode: "credits" };
+  }
+
   // A model the catalog prices at $0 would let credits users run for free while
   // we pay real money on the platform key. Refuse it in credits mode.
   const model = await getAiModel(modelId);
@@ -135,6 +143,11 @@ export async function deductCredits({
   feature: string;
   modelId: string;
 }): Promise<number | null> {
+  // Self-hosted gateway (OpenAdapter): no prepaid-credit accounting to debit.
+  if (isOpenAdapter()) {
+    return null;
+  }
+
   const micro = Math.max(MIN_DEBIT_MICRO, Math.ceil(costUsd * CREDIT_MARKUP * MICRO_PER_USD));
   const admin = getSupabaseAdminClient() as unknown as RpcClient;
   const { data, error } = await admin.rpc("debit_credits", {

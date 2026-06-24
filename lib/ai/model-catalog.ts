@@ -1,3 +1,5 @@
+import { getAiModelsUrl } from "@/lib/ai/config";
+
 export type AiModelQuality = "excellent" | "good" | "weak" | "uncertain";
 
 export type AiModelCatalogItem = {
@@ -28,7 +30,16 @@ type OpenRouterModel = {
   pricing?: {
     prompt?: string;
     completion?: string;
+    // OpenAdapter shape: per-million-token numbers + a unit.
+    input?: number;
+    output?: number;
+    unit?: string;
   };
+  // OpenAdapter fields (OpenAI-compatible gateway).
+  owned_by?: string;
+  model_type?: string;
+  endpoint_format?: string;
+  supports_vision?: boolean;
 };
 
 export const AI_MODEL_QUALITY_META: Record<
@@ -57,9 +68,8 @@ export const AI_MODEL_QUALITY_META: Record<
   },
 };
 
-export const DEFAULT_AI_MODEL_ID = "openai/gpt-5.5";
+export const DEFAULT_AI_MODEL_ID = "glm-5.2";
 
-const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const MODEL_CACHE_MS = 1000 * 60 * 60;
 
 let cachedCatalog: {
@@ -68,6 +78,17 @@ let cachedCatalog: {
 } | null = null;
 
 const seedModels: AiModelCatalogItem[] = [
+  {
+    id: "glm-5.2",
+    name: "GLM-5.2",
+    provider: "OpenAdapter",
+    quality: "excellent",
+    inputCostPerMillion: 0,
+    outputCostPerMillion: 0,
+    description: "GLM-5.2 via OpenAdapter — strong reasoning for sharpening your Creed.",
+    contextLength: 205000,
+    benchmark: { label: "Creed reasoning proxy", score: 90 },
+  },
   {
     id: "openai/gpt-5.5",
     name: "GPT-5.5",
@@ -158,6 +179,7 @@ const benchmarkRules: Array<{ pattern: RegExp; score: number; label: string }> =
   { pattern: /deepseek.*(r1|v3|chat-v3)/i, score: 86, label: "Reasoning benchmark proxy" },
   { pattern: /kimi.*k2|moonshot.*k2/i, score: 84, label: "Reasoning benchmark proxy" },
   { pattern: /qwen-?(?:3|max|coder.*plus|3-235|2\.5-72b)/i, score: 84, label: "Reasoning benchmark proxy" },
+  { pattern: /glm-?[5-9](\.\d+)?/i, score: 90, label: "Reasoning benchmark proxy" },
   { pattern: /glm-?4\.[5-9]/i, score: 82, label: "Reasoning benchmark proxy" },
   { pattern: /llama-?(?:4|3\.[1-3].*70|3\.[1-3].*405)/i, score: 82, label: "Reasoning benchmark proxy" },
   { pattern: /mistral.*(large|medium-3)/i, score: 80, label: "Reasoning benchmark proxy" },
@@ -301,8 +323,11 @@ function normalizeOpenRouterModel(model: OpenRouterModel): AiModelCatalogItem | 
   const inputModalities = model.architecture?.input_modalities ?? [];
   const outputModalities = model.architecture?.output_modalities ?? [];
   const modality = model.architecture?.modality ?? "";
-  const readsText = inputModalities.includes("text") || modality.includes("text");
-  const writesText = outputModalities.includes("text") || modality.endsWith("->text");
+  // OpenAdapter (and other OpenAI-compatible gateways) describe text chat models
+  // via model_type/endpoint_format rather than OpenRouter's modality arrays.
+  const isChat = model.model_type === "chat" || model.endpoint_format === "chat";
+  const readsText = isChat || inputModalities.includes("text") || modality.includes("text");
+  const writesText = isChat || outputModalities.includes("text") || modality.endsWith("->text");
 
   if (!readsText || !writesText) {
     return null;
@@ -324,14 +349,35 @@ function normalizeOpenRouterModel(model: OpenRouterModel): AiModelCatalogItem | 
     return null;
   }
 
+  // Pricing: OpenRouter gives per-token strings (prompt/completion); OpenAdapter
+  // gives per-million-token numbers (input/output) with unit "per_million_tokens".
+  const pricing = model.pricing ?? {};
+  const hasPerMillion =
+    pricing.unit === "per_million_tokens" ||
+    typeof pricing.input === "number" ||
+    typeof pricing.output === "number";
+  const inputCostPerMillion = hasPerMillion
+    ? Number(pricing.input ?? 0)
+    : dollarsPerMillion(pricing.prompt);
+  const outputCostPerMillion = hasPerMillion
+    ? Number(pricing.output ?? 0)
+    : dollarsPerMillion(pricing.completion);
+
+  const provider =
+    model.owned_by === "openadapter" ? "OpenAdapter" : providerFromModelId(model.id);
+
   const item = {
     id: model.id,
     name: model.name?.replace(/^[^:]+:\s*/, "").trim() || model.id,
-    provider: providerFromModelId(model.id),
+    provider,
     quality: "uncertain" as AiModelQuality,
-    inputCostPerMillion: dollarsPerMillion(model.pricing?.prompt),
-    outputCostPerMillion: dollarsPerMillion(model.pricing?.completion),
-    description: model.description?.trim() || "Available through OpenRouter.",
+    inputCostPerMillion,
+    outputCostPerMillion,
+    description:
+      model.description?.trim() ||
+      (model.owned_by === "openadapter"
+        ? "Available through OpenAdapter."
+        : "Available through OpenRouter."),
     contextLength: model.context_length,
   };
   const benchmark = inferBenchmark(item);
@@ -375,7 +421,7 @@ export async function getOpenRouterModelCatalog({ force = false }: { force?: boo
   }
 
   try {
-    const response = await fetch(OPENROUTER_MODELS_URL, {
+    const response = await fetch(getAiModelsUrl(), {
       method: "GET",
       cache: "no-store",
     });
