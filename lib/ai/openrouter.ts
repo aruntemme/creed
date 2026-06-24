@@ -1,8 +1,7 @@
 import "server-only";
 import { estimateAiCostUsd, getAiModel } from "@/lib/ai/model-catalog";
-import { getSiteUrl } from "@/lib/supabase/env";
-
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+import { getAiChatUrl } from "@/lib/ai/config";
+import { getSiteUrl } from "@/lib/env";
 
 type OpenRouterMessage = {
   role: "system" | "user" | "assistant";
@@ -68,7 +67,7 @@ export async function callOpenRouter({
 
   let response: Response;
   try {
-    response = await fetch(OPENROUTER_URL, {
+    response = await fetch(getAiChatUrl(), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,

@@ -1,0 +1,1 @@
+ALTER TABLE `creed_quality_reports` ADD `section_hashes` text;

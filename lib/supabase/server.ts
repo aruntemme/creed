@@ -1,41 +1,25 @@
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
-import {
-  getSupabasePublishableKey,
-  getSupabaseUrl,
-  isSupabaseConfigured,
-} from "@/lib/supabase/env";
+/**
+ * Former Supabase server (cookie-bound) client. Now returns the libSQL-backed
+ * compat client with a session-aware `auth.getUser()` powered by Auth.js, so
+ * the routes/pages that call `createSupabaseServerClient()` for both auth and
+ * data keep working unchanged. getAuthenticatedUser re-exports the canonical
+ * session helper.
+ */
+import { createCompatClient } from "@/lib/db/supabase-compat";
+import { getAuthenticatedUser } from "@/lib/auth/session";
 
 export async function createSupabaseServerClient() {
-  const cookieStore = await cookies();
-
-  return createServerClient(getSupabaseUrl(), getSupabasePublishableKey(), {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet) {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options);
-          });
-        } catch {
-          // Server components can read cookies but cannot always set them.
-        }
+  const client = createCompatClient();
+  return {
+    ...client,
+    auth: {
+      ...client.auth,
+      getUser: async () => {
+        const user = await getAuthenticatedUser();
+        return { data: { user }, error: null };
       },
     },
-  });
+  };
 }
 
-export async function getAuthenticatedUser() {
-  if (!isSupabaseConfigured()) {
-    return null;
-  }
-
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  return user;
-}
+export { getAuthenticatedUser };

@@ -1,4 +1,4 @@
-import type { User } from "@supabase/supabase-js";
+import type { SessionUser as User } from "@/lib/auth/session";
 
 // Lightweight structural type used by server-side helpers that work with both
 // the Supabase RLS client and the admin client. Wide enough to cover every

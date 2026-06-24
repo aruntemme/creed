@@ -1,17 +1,22 @@
 "use client";
 
 // Shared OAuth trigger for the marketing auth surface. Owns the one bit of
-// real OAuth logic (kick off Supabase OAuth, routing the result through
-// /auth/callback with an optional `next` destination) so the chrome button
-// and the /login + /signup screens don't each carry a copy.
+// real OAuth logic (kick off Auth.js OAuth with an optional post-login
+// destination) so the chrome button and the /login + /signup screens don't
+// each carry a copy.
 
 import { useState } from "react";
+import { signIn } from "next-auth/react";
 import { toast } from "sonner";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
 
-// "x" is Supabase's X / Twitter (OAuth 2.0) provider. The legacy OAuth 1.0a
-// provider is "twitter" and is not what we have enabled.
+// "x" is the marketing label; Auth.js registers the provider as "twitter".
 export type OAuthProvider = "google" | "x";
+
+// Map our UI provider id to the Auth.js provider id.
+const PROVIDER_ID: Record<OAuthProvider, string> = {
+  google: "google",
+  x: "twitter",
+};
 
 // Remember the last OAuth provider the user kicked off, so the auth screen can
 // surface a "Last used" hint. Written at click time (before the redirect).
@@ -30,7 +35,7 @@ export function readLastAuthProvider(): OAuthProvider | null {
 export function useOAuthSignIn(configured: boolean = true, redirectTo?: string) {
   const [pendingProvider, setPendingProvider] = useState<OAuthProvider | null>(null);
 
-  async function signIn(provider: OAuthProvider) {
+  async function signInWith(provider: OAuthProvider) {
     if (!configured || pendingProvider) return;
 
     setPendingProvider(provider);
@@ -39,24 +44,16 @@ export function useOAuthSignIn(configured: boolean = true, redirectTo?: string) 
     } catch {
       // Storage may be unavailable; the "Last used" hint is non-essential.
     }
-    const supabase = getSupabaseBrowserClient();
-    const callbackUrl = new URL("/auth/callback", window.location.origin);
-    if (redirectTo) {
-      callbackUrl.searchParams.set("next", redirectTo);
-    }
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: callbackUrl.toString() },
-    });
-
-    // On success the browser is already navigating to the provider, so this
-    // only runs when the handoff itself failed.
-    if (error) {
+    try {
+      // Auth.js redirects the browser to the provider; control only returns
+      // here if the handoff itself throws (e.g. provider not configured).
+      await signIn(PROVIDER_ID[provider], { callbackUrl: redirectTo ?? "/" });
+    } catch {
       setPendingProvider(null);
-      toast.error(error.message || "Could not start sign-in. Try again.");
+      toast.error("Could not start sign-in. Try again.");
     }
   }
 
-  return { signIn, pendingProvider };
+  return { signIn: signInWith, pendingProvider };
 }

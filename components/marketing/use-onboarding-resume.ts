@@ -1,70 +1,60 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 
 // True when the signed-in user has already started onboarding (a Creed exists
 // server-side: seed claimed or composed), so marketing CTAs can offer "Resume"
 // instead of "Get Started". Server-backed via /api/app/onboarding-status, so
-// it's correct on any device. Mirrors useLandingAuthState / usePaidStatus: a
-// tiny inline auth listener + fetch.
+// it's correct on any device. Reacts to auth changes via Auth.js useSession.
 
 // Last resolved value, kept at module scope so the CTA label seeds from it on
 // every client-side navigation instead of flipping "Resume" -> "Get Started"
-// and reflowing the button. Background revalidation still runs on each mount.
+// and reflowing the button.
 let cachedCanResume = false;
 
 export function useOnboardingResume(configured: boolean = true): boolean {
+  const { data: session, status } = useSession();
   const [canResume, setCanResume] = useState(cachedCanResume);
-
-  const commit = useCallback((next: boolean) => {
-    cachedCanResume = next;
-    setCanResume(next);
-  }, []);
 
   useEffect(() => {
     if (!configured) return;
     let active = true;
-    const supabase = getSupabaseBrowserClient();
+    const userId = session?.user?.id ?? null;
 
-    async function refresh(userId: string | null) {
-      if (!userId) {
-        if (active) commit(false);
-        return;
-      }
+    if (!userId) {
+      cachedCanResume = false;
+      setCanResume(false);
+      return;
+    }
+
+    (async () => {
       try {
         const res = await fetch("/api/app/onboarding-status", {
           method: "GET",
           cache: "no-store",
         });
+        if (!active) return;
         if (!res.ok) {
-          if (active) commit(false);
+          cachedCanResume = false;
+          setCanResume(false);
           return;
         }
         const data = (await res.json()) as { started?: boolean };
-        if (active) commit(Boolean(data.started));
+        cachedCanResume = Boolean(data.started);
+        if (active) setCanResume(cachedCanResume);
       } catch {
-        if (active) commit(false);
+        if (active) {
+          cachedCanResume = false;
+          setCanResume(false);
+        }
       }
-    }
-
-    supabase.auth.getUser().then((result: { data: { user: unknown } }) => {
-      const user = result.data.user as { id?: string } | null;
-      void refresh(user?.id ?? null);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event: unknown, session: unknown) => {
-      const s = session as { user?: { id?: string } } | null;
-      void refresh(s?.user?.id ?? null);
-    });
+    })();
 
     return () => {
       active = false;
-      subscription.unsubscribe();
     };
-  }, [configured, commit]);
+  }, [configured, session?.user?.id, status]);
 
   return canResume;
 }

@@ -1,34 +1,30 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { signOut } from "@/auth";
 
 // Sign-out endpoint.
 //
-// Belt-and-braces cookie clearing for shared-browser safety. Calling
-// `supabase.auth.signOut()` is necessary (it revokes the refresh token
-// server-side) but not sufficient - on shared devices, or after a future
-// cookie-domain change (e.g. moving to a custom Supabase auth domain),
-// stale `sb-*` cookies can linger and bleed the previous user's session
-// into the next sign-in. We explicitly expire every `sb-*` cookie we
-// can see so the browser is left in a known-clean state.
+// Auth.js owns the session cookie (a stateless JWT). We call its signOut to
+// clear it, then belt-and-braces sweep any auth cookie we can see so shared
+// browsers are left in a known-clean state — covering Auth.js's authjs.* /
+// __Secure-/__Host- prefixed variants plus any legacy Supabase sb-* cookies.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  const supabase = await createSupabaseServerClient();
-  await supabase.auth.signOut();
+  await signOut({ redirect: false });
 
   const origin = new URL(request.url).origin;
   const response = NextResponse.json({ ok: true, redirectTo: `${origin}/` });
 
-  // Force-expire every Supabase auth cookie. `supabase.auth.signOut()` already
-  // clears the cookies it knows about via the SSR cookie adapter, but we also
-  // sweep anything starting with `sb-` to cover legacy cookie names + any
-  // cookie set by a previous deployment on a different cookie domain.
   const cookieStore = await cookies();
   for (const cookie of cookieStore.getAll()) {
-    if (cookie.name.startsWith("sb-")) {
+    if (
+      cookie.name.startsWith("sb-") ||
+      cookie.name.includes("authjs.") ||
+      cookie.name.includes("next-auth.")
+    ) {
       response.cookies.set({
         name: cookie.name,
         value: "",

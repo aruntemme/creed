@@ -18,7 +18,7 @@ import { AnimatedPageTitle } from "@/components/marketing/animated-page-title";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { AuthCheckbox, AuthField, AuthSubmitButton, PasswordField } from "@/components/auth/auth-fields";
 import { readLastAuthProvider, useOAuthSignIn, type OAuthProvider } from "@/components/auth/use-oauth-sign-in";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { signIn } from "next-auth/react";
 
 type AuthMode = "login" | "signup";
 
@@ -120,29 +120,8 @@ export function AuthScreen({
     setLastProvider(readLastAuthProvider());
   }, []);
 
-  // While the signup "check your inbox" screen is up, watch for the session to
-  // appear (the user confirms in another tab in the same browser) and log this
-  // tab in automatically.
-  useEffect(() => {
-    if (confirmation?.kind !== "signup") return;
-    const supabase = getSupabaseBrowserClient();
-    let active = true;
-    const checkSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (active && data.session) window.location.assign(nextPath);
-    };
-    const intervalId = window.setInterval(() => void checkSession(), 3000);
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event: unknown, session: unknown) => {
-      if (active && session) window.location.assign(nextPath);
-    });
-    return () => {
-      active = false;
-      window.clearInterval(intervalId);
-      subscription.unsubscribe();
-    };
-  }, [confirmation, nextPath]);
+  // Email/password signup logs the user in immediately (no email confirmation
+  // step in local mode), so there's no "check your inbox" session-watch loop.
 
   const busy = submitting || pendingProvider !== null;
 
@@ -176,50 +155,41 @@ export function AuthScreen({
       return;
     }
 
-    const supabase = getSupabaseBrowserClient();
     const trimmedEmail = email.trim();
     setSubmitting(true);
 
     try {
-      if (mode === "login") {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: trimmedEmail,
-          password,
+      if (mode === "signup") {
+        // Create the account first (bcrypt-hashed), then fall through to the
+        // credentials sign-in below to establish the session.
+        const res = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: trimmedEmail, password }),
         });
-        if (error) {
-          toast.error(authErrorMessage(error.message, mode));
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          if (res.status === 409) {
+            setErrors({ email: "An account with this email already exists." });
+            emailRef.current?.focus();
+            return;
+          }
+          toast.error(authErrorMessage(data.error ?? "", mode));
           return;
         }
-        // Full navigation so server components pick up the new session.
-        window.location.assign(nextPath);
-        return;
       }
 
-      const { data, error } = await supabase.auth.signUp({
+      const result = await signIn("credentials", {
         email: trimmedEmail,
         password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
-        },
+        redirect: false,
       });
-      if (error) {
-        toast.error(authErrorMessage(error.message, mode));
+      if (result?.error) {
+        toast.error(authErrorMessage("invalid login credentials", mode));
         return;
       }
-      // Confirmation off -> we get a session straight away.
-      if (data.session) {
-        window.location.assign(nextPath);
-        return;
-      }
-      // Supabase returns a user with no identities for an already-registered
-      // email (anti-enumeration), so surface it as a normal field error.
-      if (data.user && (data.user.identities?.length ?? 0) === 0) {
-        setErrors({ email: "An account with this email already exists." });
-        emailRef.current?.focus();
-        return;
-      }
-      // Confirmation on -> swap to the check-your-inbox state.
-      setConfirmation({ email: trimmedEmail, kind: "signup" });
+      // Full navigation so server components pick up the new session.
+      window.location.assign(nextPath);
     } finally {
       if (mounted.current) setSubmitting(false);
     }
@@ -227,29 +197,11 @@ export function AuthScreen({
 
   async function handleForgotPassword() {
     if (busy || !configured) return;
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail || !EMAIL_PATTERN.test(trimmedEmail)) {
-      setErrors((e) => ({ ...e, email: "Enter your email to reset your password." }));
-      emailRef.current?.focus();
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-        redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
-      });
-      if (error) {
-        toast.error(error.message || "Couldn't send the reset link. Try again.");
-        return;
-      }
-      // Supabase returns success even for unknown emails (anti-enumeration), so
-      // we always land on the same confirmation state.
-      setConfirmation({ email: trimmedEmail, kind: "reset" });
-    } finally {
-      if (mounted.current) setSubmitting(false);
-    }
+    // Local mode has no transactional email. Password reset is done from the
+    // account while signed in (Settings), so point the user there.
+    toast.message(
+      "Reset your password from Settings once signed in. (Email reset isn't enabled in this local build.)",
+    );
   }
 
   return (

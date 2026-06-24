@@ -121,14 +121,11 @@ async function probeDatabase(): Promise<ComponentStatus> {
   const start = Date.now();
   try {
     const admin = getSupabaseAdminClient();
-    // Cheapest probe we can run that proves a real round-trip to Postgres:
-    // a HEAD-style count against a table we know exists. limit(1) keeps it
+    // Cheapest probe we can run that proves a real round-trip to the database:
+    // select a single id from a table we know exists. limit(1) keeps it
     // constant-time regardless of row count.
     const result = await withTimeout(
-      admin
-        .from("creed_files")
-        .select("id", { count: "exact", head: true })
-        .limit(1),
+      admin.from("users").select("id").limit(1),
       PROBE_TIMEOUT_MS
     );
 
