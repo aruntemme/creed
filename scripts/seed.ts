@@ -16,7 +16,7 @@ import { db } from "@/lib/db/client";
 import { users, creedEntitlements } from "@/lib/db/schema";
 
 async function main() {
-  const email = (process.env.SEED_EMAIL ?? "praveensm890@gmail.com")
+  const email = (process.env.SEED_EMAIL ?? "aruntemme@gmail.com")
     .trim()
     .toLowerCase();
   const password = process.env.SEED_PASSWORD ?? "creed-local-dev";
