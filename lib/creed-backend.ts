@@ -1041,7 +1041,6 @@ export function createBlankCreedState(
     mcpUrl: buildMcpUrl(),
     ...deriveMcpStatus(mcpClients),
     mcpClients,
-    syncLabel: "Saved just now",
     sections: [],
     proposals: [],
     activity: [],
@@ -1174,9 +1173,18 @@ async function loadCreedStateImpl(
     versionControl
   );
 
+  // The relative "Saved Xm ago" label starts from the most recent section
+  // edit, so a fresh page load reflects when the file actually last changed
+  // rather than always reading "just now".
+  const editTimes = ((sectionRows as SectionRow[] | null) ?? [])
+    .map((row) => Date.parse(row.last_edited_at ?? row.updated_at))
+    .filter((ts) => !Number.isNaN(ts));
+  const lastSavedAt = editTimes.length ? Math.max(...editTimes) : null;
+
   return {
     state: {
       ...baseState,
+      lastSavedAt,
       readUrl: buildReadUrl(readToken),
       readToken,
       writeToken: proposalToken,

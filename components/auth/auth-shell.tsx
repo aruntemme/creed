@@ -51,6 +51,9 @@ export function AuthShell({ topRight, children }: { topRight?: ReactNode; childr
             alt=""
             fill
             priority
+            // Pre-optimized AVIF: serve the static file directly (cached
+            // immutably) instead of re-encoding through /_next/image.
+            unoptimized
             sizes="50vw"
             className="object-cover object-center dark:hidden"
           />
@@ -58,6 +61,7 @@ export function AuthShell({ topRight, children }: { topRight?: ReactNode; childr
             src={darkPanelImage}
             alt=""
             fill
+            unoptimized
             sizes="50vw"
             className="hidden object-cover object-center dark:block"
           />

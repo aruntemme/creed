@@ -27,27 +27,25 @@ const SHARED_FEATURES: Feature[] = [
   { label: "Use credits or bring your own key", included: true },
 ];
 
-const MULTI_CREED_LABEL = "Multiple Creed files across accounts";
-
 const FREE_EXTRAS: Feature[] = [
   { label: "Managed backend, auth and storage", included: false },
   { label: "Cross-device sync and backups", included: false },
-  { label: "Priority support and updates", included: false },
-  { label: MULTI_CREED_LABEL, included: false },
 ];
 
 const PRO_EXTRAS: Feature[] = [
   { label: "Managed backend, auth and storage", included: true },
   { label: "Cross-device sync and backups", included: true },
-  { label: "Priority support and updates", included: false },
-  { label: MULTI_CREED_LABEL, included: false },
 ];
 
-const COMPANY_EXTRAS: Feature[] = [
-  { label: "Managed backend, auth and storage", included: true },
-  { label: "Cross-device sync and backups", included: true },
+// The Company card collapses all of Personal into a single ticked line, then
+// lists the company-workspace exclusives as gold stars.
+const COMPANY_FEATURES: Feature[] = [
+  { label: "Everything in Personal", included: true },
+  { label: "Shared Company Creed", included: true, star: true },
+  { label: "Per-employee Work Creeds", included: true, star: true },
+  { label: "Admin controls for members", included: true, star: true },
+  { label: "Pooled company credits for AI features", included: true, star: true },
   { label: "Priority support and updates", included: true, star: true },
-  { label: MULTI_CREED_LABEL, included: true, star: true },
 ];
 
 export function PricingPageView() {
@@ -111,9 +109,11 @@ export function PricingPageView() {
         <section className="py-10 md:py-12">
           <div className="grid gap-4 md:grid-cols-3 md:gap-5">
             <PricingCard
+              name="Open"
+              nameClassName="text-[var(--creed-border-strong)]"
               price="$0"
               cadence="forever"
-              tagline="Self-host the open-source build."
+              tagline="Self-host the open source build for free."
               features={[...SHARED_FEATURES, ...FREE_EXTRAS]}
               cta={{
                 kind: "external",
@@ -123,26 +123,22 @@ export function PricingPageView() {
               }}
             />
             <PricingCard
+              name="Personal"
+              nameClassName="text-[#2563EB]"
               price={monthly ? "$7" : "$49"}
               originalPrice={monthly ? undefined : "$79"}
               cadence={monthly ? "/mo" : "one-time"}
-              tagline={
-                monthly
-                  ? "Hosted and managed, billed monthly."
-                  : "Lifetime access to the hosted version."
-              }
+              tagline={monthly ? "Solo access build monthly." : "Solo access, hosted and yours forever."}
               features={[...SHARED_FEATURES, ...PRO_EXTRAS]}
               cta={{ kind: "plan", plan: "personal", cycle }}
             />
             <PricingCard
-              price={monthly ? "$279" : "$2,799"}
+              name="Company"
+              nameClassName="text-[#F59E0B] dark:text-[#F5A623]"
+              price={monthly ? "$179" : "$1,799"}
               cadence={monthly ? "/mo" : "one-time"}
-              tagline={
-                monthly
-                  ? "Monthly company access and more support."
-                  : "Lifetime company access and more support."
-              }
-              features={[...SHARED_FEATURES, ...COMPANY_EXTRAS]}
+              tagline={monthly ? "Team access build monthly." : "Team access, hosted and yours forever."}
+              features={COMPANY_FEATURES}
               cta={{ kind: "coming-soon", label: "Coming Soon" }}
             />
           </div>
@@ -209,6 +205,8 @@ type PricingCardCta =
   | { kind: "coming-soon"; label: string };
 
 function PricingCard({
+  name,
+  nameClassName,
   price,
   originalPrice,
   cadence,
@@ -216,6 +214,8 @@ function PricingCard({
   features,
   cta,
 }: {
+  name: string;
+  nameClassName: string;
   price: string;
   originalPrice?: string;
   cadence: string;
@@ -226,7 +226,17 @@ function PricingCard({
   return (
     <div className="flex flex-col rounded-[20px] bg-[var(--creed-surface)] p-6 md:p-7">
       <div>
-        <PriceRow price={price} originalPrice={originalPrice} cadence={cadence} />
+        <div
+          className={cn(
+            "text-[40px] font-semibold leading-none tracking-[-0.02em]",
+            nameClassName
+          )}
+        >
+          {name}
+        </div>
+        <div className="mt-5">
+          <PriceRow price={price} originalPrice={originalPrice} cadence={cadence} />
+        </div>
         <p className="mt-3 text-[14px] leading-6 text-[var(--creed-text-secondary)]">
           {tagline}
         </p>

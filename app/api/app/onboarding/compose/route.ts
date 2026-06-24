@@ -124,7 +124,7 @@ export async function POST(request: Request) {
 
   const nextState = {
     ...result.state,
-    syncLabel: "Saved just now",
+    lastSavedAt: Date.now(),
     sections: nextSections,
     proposals: [],
     mutationTick: result.state.mutationTick + 1,

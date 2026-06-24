@@ -69,6 +69,10 @@ export function LandingHero({ configured }: { configured: boolean }) {
             alt=""
             fill
             priority
+            // Already hand-optimized AVIF: skip Next's optimizer (no /_next/image
+            // re-encode) and serve the static file, which the immutable cache
+            // header keeps so repeat visits paint instantly.
+            unoptimized
             sizes="100vw"
             className="object-cover object-center dark:hidden"
           />
@@ -76,6 +80,7 @@ export function LandingHero({ configured }: { configured: boolean }) {
             src={darkApostlesImage}
             alt=""
             fill
+            unoptimized
             sizes="100vw"
             className="hidden object-cover object-center dark:block"
           />

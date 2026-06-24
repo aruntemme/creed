@@ -52,13 +52,23 @@ export function validateCreedState(input: unknown): CreedStateValidationResult {
     ["writeToken", input.writeToken],
     ["directEditToken", input.directEditToken],
     ["mcpUrl", input.mcpUrl],
-    ["syncLabel", input.syncLabel],
   ];
 
   for (const [key, value] of required) {
     if (!isBoundedString(value)) {
       return { ok: false, error: `state.${key} must be a bounded string` };
     }
+  }
+
+  if (
+    input.lastSavedAt !== null &&
+    (typeof input.lastSavedAt !== "number" || !Number.isFinite(input.lastSavedAt))
+  ) {
+    return { ok: false, error: "state.lastSavedAt must be a number or null" };
+  }
+
+  if (typeof input.saving !== "boolean") {
+    return { ok: false, error: "state.saving must be boolean" };
   }
 
   if (input.mcpStatus !== "waiting" && input.mcpStatus !== "connected") {

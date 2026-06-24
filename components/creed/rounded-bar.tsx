@@ -1,22 +1,34 @@
-// Recharts bar shape with a top radius proportional to the bar's own width
-// (capped), so corners keep a consistent look whether the bar is wide or thin
-// and never collapse into a slim pill. Use on the topmost segment of a stack.
+// Recharts bar shapes with a consistent top radius. The radius is derived from
+// the whole bar (its width and total stacked height), never from a single
+// segment, so a bar's corners look the same whether its top is a tall block or
+// a thin coloured cap. Use StackTopBar on every series of a stack.
+
 export function RoundedTopBar({
   x = 0,
   y = 0,
   width = 0,
   height = 0,
   fill,
+  radius,
 }: {
   x?: number;
   y?: number;
   width?: number;
   height?: number;
   fill?: string;
+  radius?: number;
 }) {
   if (height <= 0 || width <= 0) return <g />;
-  const r = Math.min(width * 0.5, height, 10);
-  const d = `M${x},${y + height}V${y + r}A${r},${r} 0 0 1 ${x + r},${y}H${x + width - r}A${r},${r} 0 0 1 ${x + width},${y + r}V${y + height}Z`;
+  // Default (standalone) radius keeps the old behaviour: scale with width,
+  // capped by the bar's own height and 10. When a caller passes an explicit
+  // radius (the whole-bar radius from StackTopBar), honour it instead.
+  const r = Math.min(width * 0.5, radius ?? Math.min(height, 10));
+  // If the segment is shorter than the radius (a thin top cap), extend the
+  // drawn body down so the corner arc still fits. The topmost segment paints
+  // last, so this just overlaps the segment below by a few pixels and keeps
+  // the rounded top consistent across bars.
+  const bottom = y + Math.max(height, r);
+  const d = `M${x},${bottom}V${y + r}A${r},${r} 0 0 1 ${x + r},${y}H${x + width - r}A${r},${r} 0 0 1 ${x + width},${y + r}V${bottom}Z`;
   return <path d={d} fill={fill} />;
 }
 
@@ -48,8 +60,18 @@ export function StackTopBar({
   const topKey = [...orderedKeys]
     .reverse()
     .find((key) => Number(payload?.[key] ?? 0) > 0);
-  if (topKey === dataKey) {
-    return <RoundedTopBar x={x} y={y} width={width} height={height} fill={fill} />;
+  if (topKey !== dataKey) {
+    return <rect x={x} y={y} width={width} height={height} fill={fill} />;
   }
-  return <rect x={x} y={y} width={width} height={height} fill={fill} />;
+  // recharts only hands us this segment's pixel box, so reconstruct the full
+  // bar height from the data values (this segment's pixels-per-unit) and base
+  // the radius on the whole bar, not just this thin cap.
+  const value = Number(payload?.[dataKey] ?? 0);
+  const total = orderedKeys.reduce(
+    (sum, key) => sum + Math.max(0, Number(payload?.[key] ?? 0)),
+    0
+  );
+  const totalHeight = value > 0 ? (height / value) * total : height;
+  const r = Math.min(width * 0.5, totalHeight * 0.5, 10);
+  return <RoundedTopBar x={x} y={y} width={width} height={height} fill={fill} radius={r} />;
 }

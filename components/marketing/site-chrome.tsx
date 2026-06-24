@@ -4,7 +4,7 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronDown } from "lucide-react";
+import { MenuIcon } from "@/components/ui/menu";
 import { CreedWordmark } from "@/components/creed/brand";
 import { SystemStatusPill } from "@/components/marketing/system-status";
 import { useAnimatedIconControls } from "@/components/creed/animated-icon-controls";
@@ -20,7 +20,7 @@ import { CONTACT_MAILTO, GITHUB_URL, INSTAGRAM_URL, TWITTER_URL } from "@/lib/br
 const navItems = [
   { label: "Privacy", href: "/privacy" },
   { label: "Pricing", href: "/pricing" },
-  { label: "Contact", href: CONTACT_MAILTO },
+  { label: "Context", href: "/context" },
 ] as const;
 
 const lightApostlesImage = "/assets/landing/backgrounds/light-apostles.avif";
@@ -49,6 +49,9 @@ export function MarketingHeroBanner({
             alt=""
             fill
             priority
+            // Pre-optimized AVIF: serve the static file directly (cached
+            // immutably) instead of re-encoding through /_next/image.
+            unoptimized
             sizes="100vw"
             className="object-cover object-center dark:hidden"
           />
@@ -56,6 +59,7 @@ export function MarketingHeroBanner({
             src={darkApostlesImage}
             alt=""
             fill
+            unoptimized
             sizes="100vw"
             className="hidden object-cover object-center dark:block"
           />
@@ -104,7 +108,7 @@ export function MarketingHeader({
           className="shrink-0"
           onClick={() => setMobileMenuOpen(false)}
         >
-          <CreedWordmark className="ml-0" imageClassName="invert brightness-0" />
+          <CreedWordmark className="ml-1.5" imageClassName="invert brightness-0" />
         </Link>
       </div>
 
@@ -168,7 +172,7 @@ export function MarketingHeader({
             <motion.div
               initial={{ opacity: 0, y: -10, filter: "blur(8px)" }}
               animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-              exit={{ opacity: 0, y: -8, filter: "blur(8px)" }}
+              exit={{ opacity: 0, y: -10, filter: "blur(8px)" }}
               transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
               className="absolute right-4 top-[4.65rem] flex w-[8.25rem] flex-col items-end gap-2 text-white"
             >
@@ -178,13 +182,23 @@ export function MarketingHeader({
                   className="relative z-10"
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 8 }}
+                  // Close is the open animation in reverse: same x-slide, but
+                  // the last item to appear is the first to leave.
+                  exit={{
+                    opacity: 0,
+                    x: 10,
+                    transition: {
+                      duration: 0.24,
+                      delay: (navItems.length - 1 - index) * 0.04 + 0.04,
+                      ease: [0.16, 1, 0.3, 1],
+                    },
+                  }}
                   transition={{ duration: 0.24, delay: 0.04 + index * 0.04, ease: [0.16, 1, 0.3, 1] }}
                 >
                   <Link
                     href={item.href}
                     onClick={() => setMobileMenuOpen(false)}
-                    className="flex h-9 items-center justify-end rounded-md px-3.5 text-[14px] font-medium leading-none text-white/82 transition-all duration-200 hover:bg-white/10 hover:text-white"
+                    className="flex h-9 items-center justify-end rounded-md px-3.5 text-[14px] font-medium leading-none text-white transition-colors duration-200 hover:bg-transparent hover:text-white/55"
                   >
                     {item.label}
                   </Link>
@@ -194,7 +208,12 @@ export function MarketingHeader({
               <motion.div
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 8 }}
+                // Appears last, so it leaves first when closing.
+                exit={{
+                  opacity: 0,
+                  x: 10,
+                  transition: { duration: 0.24, delay: 0, ease: [0.16, 1, 0.3, 1] },
+                }}
                 transition={{ duration: 0.24, delay: 0.18, ease: [0.16, 1, 0.3, 1] }}
                 className="relative z-10 flex flex-col items-end gap-2 pt-1"
               >
@@ -225,7 +244,7 @@ export function MarketingHeader({
                       <Link
                         href="/login"
                         onClick={() => setMobileMenuOpen(false)}
-                        className="flex h-9 items-center justify-end rounded-md px-3.5 text-[14px] font-medium leading-none text-white/82 transition-all duration-200 hover:bg-white/10 hover:text-white"
+                        className="flex h-9 items-center justify-end rounded-md px-3.5 text-[14px] font-medium leading-none text-white transition-colors duration-200 hover:bg-transparent hover:text-white/55"
                       >
                         Login
                       </Link>
@@ -286,25 +305,21 @@ function HeaderAuthActions({
   const paidStatus = usePaidStatus(configured);
   const canResume = useOnboardingResume(configured);
 
-  // Mobile-menu trigger is shared across all states so the navigation
-  // links remain reachable. We render it once at the end.
+  // Mobile-menu trigger is shared across all states so the navigation links
+  // remain reachable. No hover effect (mobile): the icon morphs hamburger <->
+  // X as the menu opens and closes, tracking `mobileMenuOpen` through every
+  // close path. A plain button (not the shadcn Button) so nothing overrides
+  // the icon size or its white colour.
   const mobileLinksTrigger = (
-    <Button
+    <button
       type="button"
-      variant="ghost"
       onClick={() => setMobileMenuOpen((value) => !value)}
-      className="h-9 rounded-md bg-transparent px-3.5 text-[14px] font-medium tracking-normal text-white/82 hover:bg-white/8 hover:text-white aria-expanded:bg-transparent aria-expanded:text-white/82 active:translate-y-0 active:bg-transparent focus-visible:ring-white/20 md:hidden"
+      className="inline-flex size-9 items-center justify-center rounded-md text-white outline-none focus-visible:ring-2 focus-visible:ring-white/20 md:hidden"
       aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
       aria-expanded={mobileMenuOpen}
     >
-      Links
-      <ChevronDown
-        className={cn(
-          "ml-1.5 h-4 w-4 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
-          mobileMenuOpen && "rotate-180"
-        )}
-      />
-    </Button>
+      <MenuIcon open={mobileMenuOpen} size={24} />
+    </button>
   );
 
   if (authState === "loading") {
@@ -366,13 +381,12 @@ function HeaderAuthActions({
   // page rather than firing Google OAuth straight from the chrome.
   return (
     <div className="flex items-center gap-2">
-      <Button
-        asChild
-        variant="ghost"
-        className="hidden h-9 rounded-md bg-transparent px-3.5 text-[14px] font-medium text-white/82 transition-all duration-200 hover:bg-white/10 hover:text-white md:inline-flex"
+      <Link
+        href="/login"
+        className="hidden h-9 items-center rounded-md px-3.5 text-[14px] font-medium text-white transition-colors duration-200 hover:text-white/55 md:inline-flex"
       >
-        <Link href="/login">Login</Link>
-      </Button>
+        Login
+      </Link>
       <Button
         asChild
         variant="ghost"
@@ -400,16 +414,15 @@ function HeaderTextButton({
   className?: string;
 }) {
   return (
-    <Button
-      asChild
-      variant="ghost"
+    <Link
+      href={href}
       className={cn(
-        "h-9 rounded-md px-3.5 text-[14px] font-medium text-white/82 transition-all duration-200 hover:bg-white/10 hover:text-white",
+        "inline-flex h-9 items-center rounded-md px-3.5 text-[14px] font-medium text-white transition-colors duration-200 hover:text-white/55",
         className
       )}
     >
-      <Link href={href}>{children}</Link>
-    </Button>
+      {children}
+    </Link>
   );
 }
 

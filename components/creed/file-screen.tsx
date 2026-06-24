@@ -16,7 +16,6 @@ import {
   Check,
   ChevronDown,
   ChevronLeft,
-  Clock3,
   Ellipsis,
   LoaderCircle,
   Plus,
@@ -29,6 +28,7 @@ import { ArchiveIcon } from "@/components/ui/archive";
 import { Button } from "@/components/ui/button";
 import { CloudDownloadIcon } from "@/components/ui/cloud-download";
 import { CloudUploadIcon } from "@/components/ui/cloud-upload";
+import { ClockIcon } from "@/components/ui/clock";
 import { CopyIcon } from "@/components/ui/copy";
 import { DeleteIcon } from "@/components/ui/delete";
 import { DownloadIcon } from "@/components/ui/download";
@@ -615,6 +615,50 @@ type GitHubPullPreview = {
   warnings: string[];
   sections: CreedSection[];
 };
+
+// The header save indicator. Owns the animated clock so its 60s relative-label
+// ticker re-renders only this line, not the whole editor.
+function SaveStatus({
+  saving,
+  lastSavedAt,
+}: {
+  saving: boolean;
+  lastSavedAt: number | null;
+}) {
+  // Same icon + animation as the activity button (HistoryIcon driven by
+  // useAnimatedIconControls), but fired by a save starting instead of a hover.
+  // start() plays the full animation once and the hook auto-settles it.
+  const { iconRef: saveIconRef, start: startSaveIcon } = useAnimatedIconControls();
+  const wasSavingRef = useRef(saving);
+  useEffect(() => {
+    if (saving && !wasSavingRef.current) {
+      startSaveIcon();
+    }
+    wasSavingRef.current = saving;
+  }, [saving, startSaveIcon]);
+
+  // Re-render once a minute so "Saved Xm ago" ages while the user is idle.
+  // Nothing to age while saving, or before the first save (static "Saved").
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (saving || lastSavedAt === null) return;
+    const id = window.setInterval(() => setTick((value) => value + 1), 60_000);
+    return () => window.clearInterval(id);
+  }, [saving, lastSavedAt]);
+
+  const label = saving
+    ? "Saving…"
+    : lastSavedAt
+      ? `Saved ${formatRelativeTime(new Date(lastSavedAt).toISOString())}`
+      : "Saved";
+
+  return (
+    <div className="mt-2 flex items-center gap-2 text-sm text-[var(--creed-text-secondary)]">
+      <ClockIcon ref={saveIconRef} size={14} className="h-3.5 w-3.5 shrink-0" />
+      {label}
+    </div>
+  );
+}
 
 export function FileScreen() {
   const router = useRouter();
@@ -1631,10 +1675,7 @@ export function FileScreen() {
                     <div className="font-heading text-[1.22rem] font-medium tracking-[-0.03em] text-[var(--creed-text-primary)] md:text-[1.45rem]">
                       {state.user.name} / Creed
                     </div>
-                    <div className="mt-2 flex items-center gap-2 text-sm text-[var(--creed-text-secondary)]">
-                      <Clock3 className="h-3.5 w-3.5" />
-                      {state.syncLabel}
-                    </div>
+                    <SaveStatus saving={state.saving} lastSavedAt={state.lastSavedAt} />
                   </div>
 
                   <div className="flex items-center gap-2 self-start">

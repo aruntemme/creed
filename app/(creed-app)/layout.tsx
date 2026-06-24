@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { AppShellLayout } from "@/components/creed/app-shell-layout";
+import { AuthedProviders } from "@/components/creed/authed-providers";
 import { hasPersistedCreed } from "@/lib/creed-backend";
 import { isSupabaseTableMissingError } from "@/lib/creed-backend-errors";
 import { hasActiveEntitlement } from "@/lib/stripe";
@@ -23,11 +24,22 @@ import { isSupabaseConfigured } from "@/lib/supabase/env";
 // Marketing routes and /payment/* don't pass through here so they remain
 // reachable to anyone. The check uses the user's own session client +
 // the "Read own entitlement" RLS policy - no admin escalation needed.
+//
+// This layout (not the root) owns the dynamic, user-specific boundary now:
+// AuthedProviders loads the Creed and supplies CreedProvider, and the gate
+// reads the session, so the segment renders dynamically while the root stays
+// static.
+export const dynamic = "force-dynamic";
+
 export default async function CreedAppLayout({ children }: { children: ReactNode }) {
   if (!isSupabaseConfigured()) {
     // Local dev without Supabase config: skip the gate so the rest of
     // the app can render. Production deployments always have Supabase.
-    return <AppShellLayout>{children}</AppShellLayout>;
+    return (
+      <AuthedProviders>
+        <AppShellLayout>{children}</AppShellLayout>
+      </AuthedProviders>
+    );
   }
 
   const supabase = await createSupabaseServerClient();
@@ -59,5 +71,9 @@ export default async function CreedAppLayout({ children }: { children: ReactNode
     redirect("/onboarding");
   }
 
-  return <AppShellLayout>{children}</AppShellLayout>;
+  return (
+    <AuthedProviders>
+      <AppShellLayout>{children}</AppShellLayout>
+    </AuthedProviders>
+  );
 }

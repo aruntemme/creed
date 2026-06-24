@@ -45,6 +45,7 @@ import {
 } from "@/lib/creed-data";
 import { normalizeRichTextInput } from "@/lib/rich-text";
 import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { toast } from "sonner";
 
 type CreedContextValue = {
   state: CreedState;
@@ -300,20 +301,26 @@ export function CreedProvider({
   }, [persistenceEnabled]);
 
   const flushPendingState = useCallback(async (snapshot: CreedState, keepalive = false) => {
+    // Flip to "Saving" only now, when the debounced write actually starts, so a
+    // continuous typing burst stays on the last "Saved" label until the user
+    // pauses. The save-status clock sweep triggers off this saving flip.
+    setState((current) => (current.saving ? current : { ...current, saving: true }));
     try {
       await persistState(snapshot, keepalive);
       lastPersistedTickRef.current = snapshot.mutationTick;
       setState((current) =>
+        // Only the latest write clears the indicator and stamps the save time;
+        // if a newer edit is already in flight, leave saving on for its flush.
         current.mutationTick === snapshot.mutationTick
-          ? { ...current, syncLabel: "Saved just now" }
+          ? { ...current, saving: false, lastSavedAt: Date.now() }
           : current
       );
     } catch {
-      setState((current) =>
-        current.mutationTick === snapshot.mutationTick
-          ? { ...current, syncLabel: "Save failed" }
-          : current
-      );
+      setState((current) => ({ ...current, saving: false }));
+      // Surface the failure the house way (sonner) instead of silently
+      // showing "Saved". A fixed id collapses repeats so a flaky connection
+      // can't stack toasts.
+      toast.error("Couldn't save your changes.", { id: "creed-save-failed" });
     }
   }, [persistState]);
 
@@ -338,20 +345,14 @@ export function CreedProvider({
     setState((current) => {
       const nextState = updater(current);
       const shouldPersist = persistenceEnabled && nextState.mutationTick !== current.mutationTick;
-      const finalState = shouldPersist
-        ? {
-            ...nextState,
-            syncLabel: "Saving",
-          }
-        : nextState;
 
-      latestStateRef.current = finalState;
+      latestStateRef.current = nextState;
 
       if (shouldPersist) {
-        schedulePersist(finalState);
+        schedulePersist(nextState);
       }
 
-      return finalState;
+      return nextState;
     });
   }
 
@@ -515,7 +516,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: current.sections.map((section) =>
           section.id === sectionId && section.kind === "rich-text"
             ? updateSectionMeta({ ...section, content }, "You", "user")
@@ -563,7 +563,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: [...current.sections, newSection],
       })
     );
@@ -594,7 +593,6 @@ export function CreedProvider({
 
       return nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: nextSections,
       });
     });
@@ -604,7 +602,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: current.sections.map((section) =>
           section.id === sectionId
             ? {
@@ -624,7 +621,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: current.sections.map((section) =>
           section.id === sectionId ? updateSectionMeta({ ...section, accent }, "You", "user") : section
         ),
@@ -652,7 +648,6 @@ export function CreedProvider({
 
       return nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: nextSections,
       });
     });
@@ -662,7 +657,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: current.sections.filter((section) => section.id !== sectionId),
         proposals: current.proposals.filter((proposal) => proposal.sectionId !== sectionId),
         activity: current.activity.filter((entry) => entry.sectionId !== sectionId),
@@ -678,7 +672,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: current.sections.map((section) =>
           section.id === sectionId ? { ...section, archived: true } : section
         ),
@@ -691,7 +684,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: current.sections.map((section) =>
           section.id === sectionId ? { ...section, archived: false } : section
         ),
@@ -723,7 +715,6 @@ export function CreedProvider({
       };
       return nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: [...archived, placeholder],
         proposals: [],
       });
@@ -743,7 +734,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: defaultSections,
         proposals: [],
         activity: [],
@@ -810,7 +800,6 @@ export function CreedProvider({
 
         return nextMutationTick({
           ...current,
-          syncLabel: "Saved just now",
           sectionRevisions: bumpSectionRevisionMap(current.sectionRevisions, newSection.id),
           sections: nextSections,
           proposals: current.proposals.filter((item) => item.id !== proposalId),
@@ -827,7 +816,6 @@ export function CreedProvider({
         const targetId = proposal.sectionId;
         return nextMutationTick({
           ...current,
-          syncLabel: "Saved just now",
           sections: current.sections.filter((section) => section.id !== targetId),
           proposals: current.proposals.filter(
             (item) => item.id !== proposalId && item.sectionId !== targetId
@@ -844,7 +832,6 @@ export function CreedProvider({
         // change, so it can't flow through applyProposalToSection.
         return nextMutationTick({
           ...current,
-          syncLabel: "Saved just now",
           sections: applyReorderDraft(current.sections, proposal.sectionId, proposal.draft),
           proposals: current.proposals.filter((item) => item.id !== proposalId),
           activity: [
@@ -856,7 +843,6 @@ export function CreedProvider({
 
       return nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sectionRevisions: bumpSectionRevisionMap(current.sectionRevisions, proposal.sectionId),
         sections: current.sections.map((section) =>
           section.id === proposal.sectionId ? applyProposalToSection(section, proposal) : section
@@ -971,7 +957,6 @@ export function CreedProvider({
 
       return nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: nextSections,
         sectionRevisions: nextRevisions,
         proposals: remainingProposals,
@@ -1014,7 +999,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         sections: current.sections.map((section) =>
           section.id === sectionId
             ? { ...section, agentPermission: permission, agentWritable: permissionToWritable(permission) }
@@ -1032,7 +1016,6 @@ export function CreedProvider({
     commitState((current) =>
       nextMutationTick({
         ...current,
-        syncLabel: "Saved just now",
         settings: { ...current.settings, requireApproval: permission !== "direct" },
         sections: current.sections.map((section) =>
           section.agentPermission === "hidden"
@@ -1126,7 +1109,7 @@ export function CreedProvider({
   async function claimOnboardingPreview(sections: CreedSection[]) {
     const nextState = nextMutationTick({
       ...state,
-      syncLabel: "Saved just now",
+      lastSavedAt: Date.now(),
       sections,
       proposals: [],
       activity: [],
@@ -1163,7 +1146,7 @@ export function CreedProvider({
 
     const nextState = nextMutationTick({
       ...state,
-      syncLabel: "Saved just now",
+      lastSavedAt: Date.now(),
       sections,
       proposals: [],
       settings: {

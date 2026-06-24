@@ -88,6 +88,16 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: securityHeaders,
       },
+      {
+        // Static brand assets (hero / auth backgrounds, etc.) are versioned by
+        // filename and never change in place, so cache them hard. This is what
+        // makes the landing backgrounds paint instantly on repeat visits
+        // instead of refetching every time. Applies in dev too.
+        source: "/assets/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
       ...NO_STORE_PATHS.map((source) => ({
         source,
         headers: [noStoreHeader],

@@ -1,26 +1,10 @@
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 import { Geist, Geist_Mono, EB_Garamond } from "next/font/google";
 import type { ReactNode } from "react";
-import { BackendSetupScreen } from "@/components/auth/backend-setup-screen";
-import { CreedProvider } from "@/components/creed/creed-provider";
 import { ThemeProvider } from "@/components/creed/theme-provider";
-import { initialCreedState } from "@/lib/creed-data";
-import { loadCreedState } from "@/lib/creed-backend";
-import { isSupabaseTableMissingError } from "@/lib/creed-backend-errors";
-import { getSiteUrl, isSupabaseConfigured } from "@/lib/supabase/env";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { isMarketingPath } from "@/lib/marketing-routes";
+import { getSiteUrl } from "@/lib/supabase/env";
 import { Toaster } from "@/components/ui/toaster";
 import "./globals.css";
-
-// Marketing / static routes don't read user state, so we skip the Supabase
-// fan-out for them (rendering in tens of ms instead of waiting on round-trips
-// nothing on the page would use). The prefix list is shared with the proxy in
-// lib/marketing-routes.ts so the two can't drift.
-function shouldSkipCreedState(pathname: string | null) {
-  return isMarketingPath(pathname);
-}
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -91,51 +75,17 @@ export const metadata: Metadata = {
   },
 };
 
-// Force every request through SSR. Without this, Vercel's build pass can
-// statically render this layout once (with no user, no cookies, no
-// pathname), then reuse the output for every visitor - so the imported
-// `initialCreedState` ends up baked into the static shell and signed-in
-// users see seed sections + an empty name in the header. `headers()`
-// and `cookies()` reads below *should* mark this dynamic on their own,
-// but Next 16 has been inconsistent about that; this is the belt-and-
-// braces guarantee.
-export const dynamic = "force-dynamic";
-
-export default async function RootLayout({
+// The root layout is intentionally static: it holds no user state, reads no
+// cookies/headers, and renders no CreedProvider. That is what lets marketing
+// pages prerender as a static shell so <Link> fully prefetches them and
+// navigation is instant with no server round-trip. The user-specific work
+// (Supabase session, loadCreedState, CreedProvider) lives in <AuthedProviders>,
+// pulled in only by the layouts that need it (the app shell and onboarding).
+export default function RootLayout({
   children,
 }: Readonly<{
   children: ReactNode;
 }>) {
-  let initialState = initialCreedState;
-  let persistenceEnabled = false;
-  let missingSchemaMessage: string | null = null;
-
-  const headerList = await headers();
-  const pathname = headerList.get("x-pathname");
-  const skipState = shouldSkipCreedState(pathname);
-
-  if (!skipState && isSupabaseConfigured()) {
-    const supabase = await createSupabaseServerClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (user) {
-      try {
-        const result = await loadCreedState(supabase, user);
-        initialState = result.state;
-        persistenceEnabled = result.hasPersistedCreed;
-      } catch (error) {
-        if (isSupabaseTableMissingError(error)) {
-          missingSchemaMessage =
-            error instanceof Error ? error.message : "Creed tables are missing.";
-        } else {
-          throw error;
-        }
-      }
-    }
-  }
-
   return (
     <html
       lang="en"
@@ -158,13 +108,7 @@ export default async function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <ThemeProvider>
-          {missingSchemaMessage ? (
-            <BackendSetupScreen errorMessage={missingSchemaMessage} />
-          ) : (
-            <CreedProvider initialState={initialState} persistenceEnabled={persistenceEnabled}>
-              {children}
-            </CreedProvider>
-          )}
+          {children}
           <Toaster />
         </ThemeProvider>
       </body>

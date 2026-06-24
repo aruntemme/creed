@@ -722,7 +722,12 @@ export type CreedState = {
   // pin a single section read-only inside an unlocked file. Cleared whenever
   // the global lock toggles.
   sectionLockOverrides: string[];
-  syncLabel: string;
+  // Epoch ms of the last successful save (or the most recent edit known at
+  // load time), used to render a relative "Saved Xm ago" label. `saving` is
+  // true only while a persist is actually in flight, so the indicator waits
+  // for a typing pause instead of flickering on every keystroke.
+  lastSavedAt: number | null;
+  saving: boolean;
   sections: CreedSection[];
   proposals: Proposal[];
   activity: ActivityEntry[];
@@ -2011,7 +2016,8 @@ export const initialCreedState: CreedState = {
   mcpClients: [],
   locked: false,
   sectionLockOverrides: [],
-  syncLabel: "Last synced 2 min ago",
+  lastSavedAt: null,
+  saving: false,
   sections: [
     {
       id: IDENTITY_SECTION_ID,
