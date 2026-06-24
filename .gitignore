@@ -66,3 +66,7 @@ supabase/.temp/
 
 # Source PNGs for landing backgrounds — ship the AVIF conversions, not these ~60MB originals
 public/assets/landing/backgrounds/*.png
+
+# Local libSQL dev database
+local.db
+local.db-*

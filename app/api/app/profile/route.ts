@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
 import { requireApiAuth } from "@/lib/api-auth";
+import { db } from "@/lib/db/client";
+import { users } from "@/lib/db/schema";
 
 export async function PATCH(request: Request) {
   const auth = await requireApiAuth();
@@ -12,24 +15,17 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Invalid display name" }, { status: 400 });
   }
 
-  const { data, error } = await auth.supabase.auth.updateUser({
-    data: {
-      name,
-      full_name: name,
-    },
-  });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    await db.update(users).set({ name }).where(eq(users.id, auth.user.id));
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Could not update profile." },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({
     ok: true,
-    user: data.user
-      ? {
-          name,
-          email: data.user.email ?? "",
-        }
-      : null,
+    user: { name, email: auth.user.email ?? "" },
   });
 }

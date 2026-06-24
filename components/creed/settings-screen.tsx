@@ -9,7 +9,10 @@ import {
   type Ref,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { UserIdentity } from "@supabase/supabase-js";
+type UserIdentity = {
+  provider: string;
+  identity_data?: Record<string, unknown> | null;
+};
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle,
@@ -92,7 +95,7 @@ import {
   type AiModelCatalogItem,
   type AiModelQuality,
 } from "@/lib/ai/model-catalog";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { signIn } from "next-auth/react";
 import {
   accentColorMap,
   type AgentPermission,
@@ -502,27 +505,28 @@ export function SettingsScreen() {
   // Load the user's linked identities so the Google / X rows reflect the real
   // account state, and refresh whenever auth changes (e.g. after a link).
   useEffect(() => {
-    const supabase = getSupabaseBrowserClient();
     let active = true;
 
     async function load() {
-      const { data, error } = await supabase.auth.getUserIdentities();
-      if (!active) return;
-      setIdentities(error ? [] : data.identities ?? []);
+      try {
+        const res = await fetch("/api/app/identities", { cache: "no-store" });
+        if (!active) return;
+        if (!res.ok) {
+          setIdentities([]);
+          return;
+        }
+        const data = (await res.json()) as { identities?: UserIdentity[] };
+        setIdentities(data.identities ?? []);
+      } catch {
+        if (active) setIdentities([]);
+      }
     }
 
     void load();
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      void load();
-    });
-
     return () => {
       active = false;
-      subscription.unsubscribe();
     };
-  }, []);
+  }, [githubRefreshTick]);
 
   const googleIdentity = identities?.find((identity) => identity.provider === "google") ?? null;
   const xIdentity = identities?.find((identity) => matchesProvider(identity.provider, "x")) ?? null;
@@ -533,12 +537,10 @@ export function SettingsScreen() {
   async function handleConnectIdentity(provider: LoginProvider) {
     try {
       setLinkingProvider(provider);
-      const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.auth.linkIdentity({
-        provider,
-        options: { redirectTo: `${window.location.origin}/auth/callback?next=/settings` },
-      });
-      if (error) throw error;
+      // Signing in with a new provider while authenticated links it to the
+      // current account via the Drizzle adapter. "x" maps to Auth.js "twitter".
+      const authProvider = provider === "x" ? "twitter" : provider;
+      await signIn(authProvider, { callbackUrl: "/settings" });
       // On success the browser is navigating to the provider; nothing else runs.
     } catch (error) {
       toast.error(
@@ -558,11 +560,18 @@ export function SettingsScreen() {
     }
     try {
       setUnlinkingProvider(provider);
-      const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.auth.unlinkIdentity(identity);
-      if (error) throw error;
-      const { data } = await supabase.auth.getUserIdentities();
-      setIdentities(data?.identities ?? []);
+      const res = await fetch("/api/app/identities", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error || `Couldn't disconnect ${label}`);
+      }
+      const listRes = await fetch("/api/app/identities", { cache: "no-store" });
+      const data = (await listRes.json()) as { identities?: UserIdentity[] };
+      setIdentities(data.identities ?? []);
       toast.success(`${label} disconnected`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : `Couldn't disconnect ${label}`);
@@ -574,19 +583,9 @@ export function SettingsScreen() {
   async function handleConnectGitHub() {
     try {
       setConnectingGitHub(true);
-      const supabase = getSupabaseBrowserClient();
-      const redirectTo = `${window.location.origin}/auth/callback?next=/settings&integration=github`;
-      const { error } = await supabase.auth.linkIdentity({
-        provider: "github",
-        options: {
-          redirectTo,
-          scopes: "repo read:user",
-        },
-      });
-
-      if (error) {
-        throw error;
-      }
+      // GitHub provider requests "repo read:user" scope (configured in auth.ts);
+      // signing in while authenticated links it to the current account.
+      await signIn("github", { callbackUrl: "/settings" });
     } catch (error) {
       toast.error(formatGitHubConnectError(error));
       setConnectingGitHub(false);
@@ -596,22 +595,13 @@ export function SettingsScreen() {
   async function handleDisconnectGitHub() {
     try {
       setDisconnectingGitHub(true);
-      const supabase = getSupabaseBrowserClient();
-      const { data, error } = await supabase.auth.getUserIdentities();
-
-      if (error) {
-        throw error;
-      }
-
-      const githubIdentity = data.identities.find(
-        (identity: UserIdentity) => identity.provider === "github"
-      );
-      if (githubIdentity) {
-        const unlinkResult = await supabase.auth.unlinkIdentity(githubIdentity);
-        if (unlinkResult.error) {
-          throw unlinkResult.error;
-        }
-      }
+      // Unlink the GitHub OAuth account (ignore "last method" guard failures —
+      // GitHub is an integration, not necessarily a sign-in method here).
+      await fetch("/api/app/identities", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "github" }),
+      }).catch(() => {});
 
       const response = await fetch("/api/app/github/integration", {
         method: "DELETE",

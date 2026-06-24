@@ -12,11 +12,12 @@ import { toast } from "sonner";
 import { AnimatedPageTitle } from "@/components/marketing/animated-page-title";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { AuthSubmitButton, PasswordField } from "@/components/auth/auth-fields";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { useSession } from "next-auth/react";
 
 type Status = "checking" | "ready" | "invalid";
 
 export function ResetPasswordScreen({ configured = true }: { configured?: boolean }) {
+  const { status: sessionStatus } = useSession();
   const [status, setStatus] = useState<Status>(configured ? "checking" : "invalid");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -36,16 +37,14 @@ export function ResetPasswordScreen({ configured = true }: { configured?: boolea
 
   useEffect(() => {
     if (!configured) return;
-    const supabase = getSupabaseBrowserClient();
-    let active = true;
-    void supabase.auth.getUser().then((result: { data: { user: unknown } }) => {
-      if (!active) return;
-      setStatus(result.data.user ? "ready" : "invalid");
-    });
-    return () => {
-      active = false;
-    };
-  }, [configured]);
+    // A signed-in user can set a new password; otherwise the link/route is
+    // invalid (local mode has no emailed recovery session).
+    if (sessionStatus === "loading") {
+      setStatus("checking");
+    } else {
+      setStatus(sessionStatus === "authenticated" ? "ready" : "invalid");
+    }
+  }, [configured, sessionStatus]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -69,10 +68,14 @@ export function ResetPasswordScreen({ configured = true }: { configured?: boolea
 
     setSubmitting(true);
     try {
-      const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase.auth.updateUser({ password });
-      if (error) {
-        toast.error(error.message || "Couldn't update your password. Try again.");
+      const res = await fetch("/api/app/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        toast.error(data.error || "Couldn't update your password. Try again.");
         return;
       }
       toast.success("Password updated.");

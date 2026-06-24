@@ -1,27 +1,14 @@
-import { createClient } from "@supabase/supabase-js";
-import {
-  getSupabaseSecretKey,
-  getSupabaseUrl,
-  isSupabaseAdminConfigured,
-} from "@/lib/supabase/env";
-
-let adminClient: ReturnType<typeof createClient> | null = null;
+/**
+ * Former Supabase service-role client. Now returns the libSQL-backed compat
+ * client (unscoped — the same trust level the service_role key had). The name
+ * is kept so the many `getSupabaseAdminClient()` call sites are untouched.
+ */
+import { createCompatClient } from "@/lib/db/supabase-compat";
 
 export function getSupabaseAdminClient() {
-  if (!isSupabaseAdminConfigured()) {
-    throw new Error("Supabase admin client is not configured.");
-  }
+  return createCompatClient();
+}
 
-  if (adminClient) {
-    return adminClient;
-  }
-
-  adminClient = createClient(getSupabaseUrl(), getSupabaseSecretKey(), {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-
-  return adminClient;
+export function isSupabaseAdminConfigured() {
+  return true;
 }

@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, EB_Garamond } from "next/font/google";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/creed/theme-provider";
-import { getSiteUrl } from "@/lib/supabase/env";
+import { AuthSessionProvider } from "@/components/providers/auth-session-provider";
+import { getSiteUrl } from "@/lib/env";
 import { Toaster } from "@/components/ui/toaster";
 import "./globals.css";
 
@@ -107,10 +108,12 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-full flex flex-col">
-        <ThemeProvider>
-          {children}
-          <Toaster />
-        </ThemeProvider>
+        <AuthSessionProvider>
+          <ThemeProvider>
+            {children}
+            <Toaster />
+          </ThemeProvider>
+        </AuthSessionProvider>
       </body>
     </html>
   );

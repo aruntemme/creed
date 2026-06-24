@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import "server-only";
 import { cache } from "react";
-import type { User } from "@supabase/supabase-js";
+import type { SessionUser as User } from "@/lib/auth/session";
 import {
   buildAgentReadPayload,
   inferSectionTemplate,

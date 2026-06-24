@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowRightIcon } from "@/components/ui/arrow-right";
 import { useAnimatedIconControls } from "@/components/creed/animated-icon-controls";
 import { cn } from "@/lib/utils";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { signIn } from "next-auth/react";
 
 type GoogleAuthCtaProps = {
   label?: string;
@@ -33,14 +33,7 @@ export function GoogleAuthCta({
 
     try {
       setLoading(true);
-      const supabase = getSupabaseBrowserClient();
-      const redirectTo = `${window.location.origin}/auth/callback`;
-      await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo,
-        },
-      });
+      await signIn("google", { callbackUrl: "/" });
     } finally {
       setLoading(false);
     }

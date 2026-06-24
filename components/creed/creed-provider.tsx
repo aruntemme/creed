@@ -44,7 +44,7 @@ import {
   type ProposalDraft,
 } from "@/lib/creed-data";
 import { normalizeRichTextInput } from "@/lib/rich-text";
-import { getSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { signOut as authSignOut } from "next-auth/react";
 import { toast } from "sonner";
 
 type CreedContextValue = {
@@ -1170,9 +1170,7 @@ export function CreedProvider({
   }
 
   async function signOut() {
-    const supabase = getSupabaseBrowserClient();
-    await supabase.auth.signOut();
-    window.location.href = "/";
+    await authSignOut({ callbackUrl: "/" });
   }
 
   function exportMarkdown() {

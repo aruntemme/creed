@@ -80,8 +80,10 @@ Creed is in active development. Free while pricing is shaped around real user fe
 You'll need:
 
 - **Node.js 20+**
-- **a Supabase project** (free tier is fine)
+- **a Turso database** — or nothing at all locally: it defaults to an on-disk SQLite file (`file:./local.db`)
 - **an OpenRouter API key** (only needed for the AI-powered features — onboarding synthesis, quality analysis, refinement)
+
+Auth is handled by **Auth.js (NextAuth)** with email/password out of the box; Google / GitHub / X sign-in are optional and turn on when their env keys are present. The database is **Turso (libSQL)** via **Drizzle ORM**.
 
 ### 1. Clone and install
 
@@ -103,25 +105,34 @@ cp .env.example .env.local
 
 ```bash
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
-NEXT_PUBLIC_SUPABASE_URL=https://<your-project>.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<your-supabase-publishable-key>
-SUPABASE_SECRET_KEY=<your-supabase-service-role-key>
+TURSO_DATABASE_URL=file:./local.db        # local SQLite file; or a libsql:// Turso URL
+AUTH_SECRET=<base64-encoded-32-byte-secret>
 CREED_ENCRYPTION_SECRET=<base64-encoded-32-byte-secret>
 ```
 
-Generate the encryption secret with `openssl rand -base64 32`.
-
-Optional (branding shown in the public chrome, payments, GitHub integration, feedback widget) are all documented inline in `.env.example` — copy whichever ones you want to enable.
+Generate each secret with `openssl rand -base64 32`. Add `AUTH_GOOGLE_ID/SECRET`, `AUTH_GITHUB_ID/SECRET`, or `AUTH_TWITTER_ID/SECRET` to enable social sign-in (optional). Other optional vars (branding, Stripe, OpenRouter, feedback) are documented inline in `.env.example`.
 
 ### 3. Run database migrations
 
 ```bash
-# install Supabase CLI if you don't have it: brew install supabase/tap/supabase
-supabase link --project-ref <your-project-ref>
-supabase db push
+npm run db:migrate    # applies drizzle/ migrations to TURSO_DATABASE_URL
 ```
 
-This creates every table Creed needs (sections, proposals, activity, tokens, MCP, GitHub, AI usage, audit log, rate limits, Stripe entitlements) plus the row-level-security policies that make sure users only ever see their own data.
+This creates every table Creed needs (Auth.js users/accounts/sessions, plus sections, proposals, activity, tokens, MCP, GitHub, AI usage, audit log, Stripe entitlements, and the OAuth-server tables). Per-user isolation — previously Postgres RLS — is enforced in the application data layer (every user query is scoped by `user_id`).
+
+To regenerate migrations after editing `lib/db/schema.ts`, run `npm run db:generate`.
+
+#### Seed a local account (optional)
+
+```bash
+npm run db:seed       # creates an email/password user + a lifetime entitlement
+```
+
+Prints the email/password to sign in with. Override via `SEED_EMAIL` / `SEED_PASSWORD` / `SEED_NAME`.
+
+#### Migrating existing Supabase data (optional)
+
+If you're moving off a previous Supabase deployment, set `SUPABASE_DB_URL` (Dashboard → Project Settings → Database) and run `npm run db:import` to copy every table into Turso. Note: Supabase password hashes can't be reused by Auth.js, so imported users sign in via OAuth or reset their password.
 
 ### 4. (Optional) Wire up Stripe
 
@@ -176,7 +187,8 @@ MCP uses OAuth 2.1: Creed is its own authorization server (`/authorize`, `/token
 - **Tailwind CSS v4** + **shadcn/ui**
 - **Tiptap** for the rich-text editor
 - **Framer Motion** for the calmer-than-normal interactions
-- **Supabase** for auth, Postgres, RLS, realtime
+- **Auth.js (NextAuth)** for auth (email/password + Google/GitHub/X OAuth)
+- **Turso (libSQL)** + **Drizzle ORM** for the database
 - **OpenRouter** for BYOK AI
 
 A complete tour of the public stack lives at [creed.md/stack](https://creed.md/stack).
@@ -202,12 +214,15 @@ components/
 
 lib/
 ├── creed-data.ts       types, section IDs, agent contract
-├── creed-backend.ts    Supabase reads/writes
+├── creed-backend.ts    Creed reads/writes (via the libSQL data layer)
+├── db/                 Drizzle schema, Turso client, RPC ports, compat layer
+├── auth/               Auth.js session helpers
 ├── ai/                 OpenRouter, model catalog, quality
-├── onboarding/         the synthesizer pipeline
-└── supabase/           browser + server clients
+└── onboarding/         the synthesizer pipeline
 
-supabase/migrations/    canonical schema
+auth.ts                 Auth.js (NextAuth) configuration
+drizzle/                generated SQL migrations (canonical schema)
+scripts/                seed + Supabase->Turso import
 public/                 static assets
 ```
 
